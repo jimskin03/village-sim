@@ -4,7 +4,7 @@ A small, autonomous 2D fishing village. Villagers work toward daily goals, make
 friends, talk and remember while lanterns flicker beside the water. Runs locally
 with **Python 3.11+**, a modern browser, and **no dependencies or API key**.
 
-![The village at night](docs/assets/village-night-background.jpg)
+![Lantern Bay at evening, with villagers, the lit hearth, and the supper supplies](docs/assets/lantern-bay.jpg)
 
 ## Run
 
