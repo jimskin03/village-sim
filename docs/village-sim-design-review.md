@@ -208,8 +208,9 @@ the village sim's simple grid.
    fixed constant. The default is three agents, adjustable up or down from settings. One step equals
    fifteen minutes of game time, so a full game day is ninety-six steps. Game time is its own clock,
    independent of model response latency.
-6. **Memory depth.** Is a short rolling memory enough, or do we want long-term recall
-   across many game days from the start?
+6. **Memory depth (resolved).** Memory is session-scoped: it lasts until the session ends, with no
+   step-count limit. If the session continues past 100 steps, memory carries forward and becomes
+   long-term naturally. If the session ends, agents start fresh next time.
 7. **Player role.** Pure observer, or can the user talk to agents and drop events in
    (a storm, a festival)?
 8. **Persistence and replay.** Is saving runs and replaying them in the viewer a v1
