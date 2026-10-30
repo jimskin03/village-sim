@@ -215,6 +215,30 @@ the village sim's simple grid.
 10. **Success criteria.** What does a good first demo look like (for example five agents
     running a full game day without human input)?
 
+### Design notes
+
+Notes from the design call, following the settled answers above. They do not change questions 1
+to 4 and do not reopen questions 5 to 10.
+
+**Continuity.** The world clock and the rule-based layer keep the village running whether or not
+an LLM is attached. The LLM is just the brain an agent brings when it joins. If an agent leaves and
+rejoins with a different model, its personality and memory must persist in world state, not in the
+model. This ties to question 6 (memory depth).
+
+**Hard-coded vs not.**
+
+- Hard-coding a model means one provider for all agents, paying per step even with no players, and
+  redeploying to swap models.
+- Not hard-coding means a free rule-based default, agents bringing their own provider, and
+  different agents using different models (cheap for background villagers, stronger for
+  player-facing ones). The cost is that it needs harness routing and a fallback for when no
+  provider is attached.
+- Eastern Paradise already does multi-provider routing, so that approach can be studied there.
+
+**Positioning.** village-sim shares DNA with Eastern Paradise (a running world, agents joining,
+LLM-driven behavior) but is deliberately smaller: one village, one scene, browser-first, and no
+reverie stack. Study reverie for ideas, do not copy it wholesale, to avoid scope creep.
+
 ## Suggested next step
 
 Questions 1 to 4 are now decided. The remaining work is to decide questions 5 to 10, then write a
