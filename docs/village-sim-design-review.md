@@ -194,13 +194,16 @@ the village sim's simple grid.
    (see section 1), not the reference screenshot. Still open: keep generating art, commission an
    artist, or add sprites and tiles in the same style. Confirm the generated image's licence terms
    before any commercial use.
-2. **Platform.** Browser (canvas or Phaser-style) or a native viewer? Does it need to
-   run on a phone?
+2. **Platform (resolved).** Browser (canvas or Phaser-style). It must also run on a phone, so a
+   mobile-compatible browser is a requirement.
 3. **Reuse or standalone (resolved).** This project lives in its own repository so it does not
    entangle with thehabitat's reverie stack. Reverie is studied for ideas. If any of its code is
    copied, keep its licence notice.
-4. **Model provider.** Which LLM provider and model, what per-step budget, and is a
-   fully offline rule-based mode a hard requirement?
+4. **Model provider (resolved).** Do not hard-code an LLM before launching the server. The world
+   runs on its own, with rule-based mode as the default. Agents join the village scene like a
+   coding harness agent, similar to how agents join the running world in Eastern Paradise
+   (`jimskin03/eastern-paradise`), and bring their own model provider when they join. The LLM is an
+   optional per-agent add-on, not a server-level dependency.
 5. **Agent count and step size.** How many agents, and how long is one step in game time?
 6. **Memory depth.** Is a short rolling memory enough, or do we want long-term recall
    across many game days from the start?
@@ -214,5 +217,6 @@ the village sim's simple grid.
 
 ## Suggested next step
 
-Decide questions 1 to 4, then write a one-page technical spec for the world file and the
-snapshot format. Only after that start implementation.
+Questions 1 to 4 are now decided. The remaining work is to decide questions 5 to 10, then write a
+one-page technical spec for the world file and the snapshot format. Only after that start
+implementation.
