@@ -337,6 +337,49 @@ class Simulation:
             field: data.get(field) for field in ("speech", "result", "mood", "promise", "thought")
         })
 
+    def _with_voice(self, agent, observation, voice):
+        ruled = self.decision(agent, observation)
+        if voice is None:
+            return ruled
+
+        def keep(field):
+            value = getattr(voice, field)
+            return value if value in observation.get(field + "_options", []) else None
+
+        thought = voice.thought
+        if not isinstance(thought, str) or len(thought) > 200:
+            thought = None
+        return Action(
+            ruled.place,
+            ruled.activity,
+            keep("speech"),
+            keep("result"),
+            keep("mood"),
+            keep("promise"),
+            thought.strip() if isinstance(thought, str) else None,
+        )
+
+    def adopt_model_decision(self, aid: str, action: dict):
+        """Keep the model's mood, words and result. The current rules choose the body."""
+        observation = self.observe(aid)
+        suggested = observation["suggested_action"]
+        fitted = {
+            "step": self.step,
+            "place": suggested["place"],
+            "activity": suggested["activity"],
+        }
+        for field in ("result", "mood", "promise", "speech"):
+            value = action.get(field)
+            fitted[field] = value if value in observation.get(field + "_options", []) else None
+        thought = action.get("thought")
+        if isinstance(thought, str):
+            thought = thought.strip()[:200] or None
+        else:
+            thought = None
+        fitted["thought"] = thought
+        self.submit(aid, fitted)
+        return fitted
+
     def inject(self, kind: str):
         if kind == "storm":
             self.weather = "storm"
@@ -407,16 +450,17 @@ class Simulation:
         for agent in self.agents.values():
             observation = self.observe(agent.id)
             action = self.pending.pop(agent.id, None)
-            # World events always take precedence over an optional external plan.
+            # The rules choose where the body goes. A connected brain can still
+            # leave its mood, thought, speech, promise and work result.
+            suggested = observation["suggested_action"]
             if (
                 action is None
                 or self.weather == "storm"
                 or self.step < self.festival_until
+                or action.place != suggested["place"]
+                or action.activity != suggested["activity"]
             ):
-                action = self.decision(agent, observation)
-            # A delayed response cannot override a changed hour or world event.
-            if action.place != observation["suggested_action"]["place"] or action.activity != observation["suggested_action"]["activity"]:
-                action = self.decision(agent, observation)
+                action = self._with_voice(agent, observation, action)
             if action.mood in observation["mood_options"]:
                 agent.mood = action.mood
             agent.thought = action.thought

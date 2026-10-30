@@ -195,6 +195,7 @@ function render(next) {
   renderDetails();
   renderJournal();
   connectionLabel();
+  villageSound.follow(state);
 }
 function placePosition(place) {
   return `left:${((place.x + 0.5) * 32 / 1280) * 100}%;top:${((place.y + 0.5) * 32 / 720) * 100}%`;

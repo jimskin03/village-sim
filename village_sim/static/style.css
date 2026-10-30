@@ -369,6 +369,9 @@ main {
   width: 19px;
   height: 19px;
 }
+#sound[aria-pressed="true"] {
+  color: #e4c27a;
+}
 .divider {
   width: 1px;
   height: 20px;

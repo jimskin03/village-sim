@@ -167,10 +167,21 @@ class ProviderTests(unittest.TestCase):
         state = self.request("/api/control", {"action": "step"})
         self.assertEqual(state["agents"][0]["destination"], "fire")
         self.assertNotIn("secret-test-key", json.dumps(state))
-        self.provider.content = json.dumps({"place": "ocean", "activity": "swimming"})
+        self.provider.content = json.dumps({
+            "place": "ocean",
+            "activity": "swimming",
+            "mood": "worried",
+            "thought": "The jetty is the real work.",
+        })
         self.request("/api/agents/mara/brain", {"action": "think"})
-        self.wait_for_brain(status="error")
-        self.assertIsNone(self.session.brains["mara"].action)
+        self.wait_for_brain()
+        self.assertEqual(self.session.brains["mara"].action["place"], "fire")
+        self.assertNotEqual(self.session.brains["mara"].action["activity"], "swimming")
+        state = self.request("/api/control", {"action": "step"})
+        self.assertEqual(state["agents"][0]["destination"], "fire")
+        self.assertEqual(state["agents"][0]["mood"], "worried")
+        self.assertEqual(state["agents"][0]["thought"], "The jetty is the real work.")
+        self.assertIsNone(state["brains"]["mara"]["error"])
         self.provider.status = 401
         self.request("/api/agents/mara/brain", {"action": "think"})
         self.wait_for_brain(status="error")
@@ -213,7 +224,22 @@ class ProviderTests(unittest.TestCase):
             {"base_url": self.base + "/chat/completions", "model": "local"}
         )
         self.assertEqual(plan(config, Simulation().observe("mara"))["place"], "fire")
+        self.assertEqual(
+            self.provider.calls[-1]["body"]["response_format"],
+            {"type": "json_object"},
+        )
         self.assertIsNone(self.provider.calls[-1]["authorization"])
+        self.provider.content = [
+            {"type": "reasoning", "text": "<think>weigh the options</think>"},
+            {
+                "type": "text",
+                "text": 'Mara would answer:\n```json\n{"mood":"Hopeful","note":"evening",}\n```',
+            },
+        ]
+        decision = plan(config, Simulation().observe("mara"))
+        self.assertEqual(decision["mood"], "hopeful")
+        self.assertEqual(decision["place"], "fire")
+        self.assertNotIn("note", decision)
 
 
 class SlotValidationTests(unittest.TestCase):
@@ -234,14 +260,25 @@ class SlotValidationTests(unittest.TestCase):
         result = validate_slots(slots, self.observation)
         self.assertEqual(result, {**self.observation["suggested_action"], **slots})
 
-    def test_invented_actions_facts_and_malformed_values_are_rejected(self):
-        for value in ({"activity": "flying"}, {"place": "garden"},
-                      {"result": "a thousand fish"}, {"mood": "invincible"},
+    def test_invented_actions_are_ignored_and_bad_slots_are_dropped(self):
+        flying = validate_slots({"activity": "flying", "mood": "worried"}, self.observation)
+        self.assertEqual(flying["activity"], "fishing for supper")
+        self.assertEqual(flying["place"], "jetty")
+        self.assertEqual(flying["mood"], "worried")
+        garden = validate_slots({"place": "garden"}, self.observation)
+        self.assertEqual(garden["place"], "jetty")
+        for value in ({"result": "a thousand fish"}, {"mood": "invincible"},
                       {"promise": "Tom owes me a fortune"}, {"speech": "Hello!"},
-                      {"thought": "x" * 201}, {"result": ["empty_net"]},
-                      {"fish": 1000}):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                validate_slots(value, self.observation)
+                      {"result": ["empty_net"]}):
+            with self.subTest(value=value):
+                result = validate_slots(value, self.observation)
+                self.assertIsNone(result[next(iter(value))])
+                self.assertEqual(result["place"], "jetty")
+        self.assertEqual(len(validate_slots({"thought": "x" * 201}, self.observation)["thought"]), 200)
+        kept = validate_slots({"fish": 1000, "mood": "Hopeful"}, self.observation)
+        self.assertNotIn("fish", kept)
+        self.assertEqual(kept["mood"], "hopeful")
+        self.assertEqual(kept["place"], "jetty")
 
     def test_null_slots_leave_the_rules_in_charge(self):
         result = validate_slots({"result": None, "speech": None}, self.observation)

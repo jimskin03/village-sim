@@ -1,4 +1,5 @@
 import json
+import socket
 import tempfile
 import threading
 import unittest
@@ -147,6 +148,37 @@ class ServerTests(unittest.TestCase):
             self.request("/api/control", {"action": "population", "count": -1})
         self.assertEqual(error.exception.code, 400)
         self.assertEqual(len(self.request("/api/state")["agents"]), 3)
+
+    def post_raw(self, host, origin=None):
+        port = self.server.server_port
+        body = b'{"action":"pause"}'
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+            sock.settimeout(3)
+            headers = [
+                "POST /api/control HTTP/1.1",
+                f"Host: {host}",
+                "Content-Type: application/json",
+                f"Content-Length: {len(body)}",
+                "Connection: close",
+            ]
+            if origin:
+                headers.append(f"Origin: {origin}")
+            sock.sendall(("\r\n".join(headers) + "\r\n\r\n").encode() + body)
+            data = b""
+            while chunk := sock.recv(4096):
+                data += chunk
+        return data
+
+    def test_loopback_forward_and_ipv6_are_local_but_rebinding_is_not(self):
+        forwarded = self.post_raw("localhost:59999", "http://localhost:59999")
+        self.assertTrue(forwarded.startswith(b"HTTP/1.0 200") or forwarded.startswith(b"HTTP/1.1 200"))
+        ipv6 = self.post_raw("[::1]:59999", "http://[::1]:59999")
+        self.assertIn(b" 200 ", ipv6)
+        rebound = self.post_raw("evil.example:8000", "http://evil.example:8000")
+        self.assertIn(b" 403 ", rebound)
+        self.assertIn(b"127.0.0.1", rebound)
+        mismatched = self.post_raw("localhost:59999", "http://127.0.0.1:59999")
+        self.assertIn(b" 403 ", mismatched)
 
     def test_docs_page_and_resume_keep_a_bad_ledger_from_replacing_the_village(self):
         with urlopen(self.base + "/docs", timeout=3) as response:

@@ -99,6 +99,24 @@ class SimulationTests(unittest.TestCase):
         sim.tick()
         self.assertEqual(sim.agents["mara"].destination, "mara_home")
 
+    def test_a_wrong_place_keeps_the_model_voice_and_the_rule_body(self):
+        sim = Simulation()
+        fitted = sim.adopt_model_decision("mara", {
+            "place": "ocean",
+            "activity": "swimming",
+            "mood": "hopeful",
+            "thought": "The crate can wait.",
+            "speech": "not a line the village offered",
+        })
+        self.assertEqual(fitted["place"], "fire")
+        self.assertNotEqual(fitted["activity"], "swimming")
+        sim.tick()
+        mara = sim.agents["mara"]
+        self.assertEqual(mara.destination, "fire")
+        self.assertEqual(mara.mood, "hopeful")
+        self.assertEqual(mara.thought, "The crate can wait.")
+        self.assertIsNone(mara.speech)
+
     def test_population_validation(self):
         sim = Simulation()
         for invalid in (0, 9, 1.2, True, None, "3"):

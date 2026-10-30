@@ -11,13 +11,37 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Condition, Thread
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from . import providers
 from .simulation import Simulation
 from .persistence import export_session, read_session, restore_session, write_session
 
 STATIC = Path(__file__).parent / "static"
+
+
+def _split_host(value: str) -> tuple[str, str]:
+    """Return a lowercase hostname and port from a Host header or address."""
+    value = value.strip()
+    if value.startswith("["):
+        name, separator, rest = value[1:].partition("]")
+        if not separator:
+            return "", ""
+        return name.lower(), rest[1:] if rest.startswith(":") else ""
+    if value.count(":") > 1:
+        return value.lower(), ""
+    if ":" in value:
+        name, port = value.rsplit(":", 1)
+        if port.isdigit():
+            return name.lower().rstrip("."), port
+    return value.lower().rstrip("."), ""
+
+
+def _loopback(name: str) -> bool:
+    name = name.lower().strip("[]").split("%", 1)[0]
+    if name.startswith("::ffff:"):
+        name = name.removeprefix("::ffff:")
+    return name == "localhost" or name == "::1" or name.startswith("127.")
 
 
 @dataclass
@@ -166,14 +190,18 @@ class Session:
             agent.provider = brain.config.model[:60]
             agent.provider_until = self.sim.step + 9
             if brain.action and self.sim.step < brain.until:
-                action = {**brain.action, "step": self.sim.step}
+                action = dict(brain.action)
                 if not brain.speak:
                     action["speech"] = None
                 try:
-                    self.sim.submit(aid, action)
+                    # Retarget the held voice onto wherever the rules now send
+                    # the body. A changed hour does not discard the decision.
+                    fitted = self.sim.adopt_model_decision(aid, action)
+                    brain.action = {
+                        key: fitted.get(key) for key in
+                        ("place", "activity", "speech", "result", "mood", "promise", "thought")
+                    }
                 except ValueError:
-                    # The hour, work site or recent facts changed while the
-                    # model's intent was held. Rules immediately take over.
                     brain.action = None
                     self.sim.pending.pop(aid, None)
                 brain.speak = False
@@ -216,18 +244,18 @@ class Session:
                 return
             if action is not None and not error:
                 try:
-                    # Validate at the current clock; HTTP planning may have
-                    # spanned several steps. World-event priorities still win.
-                    sim.submit(aid, {**action, "step": sim.step})
+                    # The call may have spanned several steps. Keep whatever
+                    # still fits, and let the rules choose the current place.
+                    fitted = sim.adopt_model_decision(aid, action)
                     brain.action = {
-                        key: action.get(key) for key in
+                        key: fitted.get(key) for key in
                         ("place", "activity", "speech", "result", "mood", "promise", "thought")
                     }
                     brain.until = sim.step + brain.config.every_steps
                     brain.speak = True
                     brain.decisions += 1
                 except (ValueError, TypeError, KeyError):
-                    error = "The model chose an invalid place or activity. Rules are keeping the villager moving."
+                    error = "The model's decision no longer fits this moment. Rules are keeping the villager moving."
             if error:
                 sim.pending.pop(aid, None)
                 brain.action = None
@@ -365,20 +393,54 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass
 
-    def do_POST(self):
-        # The local control API accepts only same-origin browser requests. CLI
-        # harnesses do not send Origin. This also protects against DNS rebinding.
-        host = self.headers.get("Host", "")
-        expected_hosts = {
-            f"localhost:{self.server.server_port}",
-            f"127.0.0.1:{self.server.server_port}",
-            f"{self.server.server_address[0]}:{self.server.server_port}",
-            f"{self.connection.getsockname()[0]}:{self.server.server_port}",
-        }
+    def local_control_allowed(self):
+        """Allow this machine's page or CLI. Reject another website, including
+        one that rebinds its name onto 127.0.0.1."""
+        host_name, host_port = _split_host(self.headers.get("Host", ""))
+        if not host_name:
+            return False
         origin = self.headers.get("Origin")
-        if host not in expected_hosts or (origin and origin != "http://" + host):
+        if origin:
+            parsed = urlsplit(origin)
+            origin_port = "" if parsed.port is None else str(parsed.port)
+            if (
+                parsed.scheme not in ("http", "https")
+                or parsed.hostname is None
+                or parsed.username
+                or parsed.password
+                or parsed.hostname.lower().rstrip(".") != host_name
+                or origin_port != host_port
+            ):
+                return False
+        try:
+            peer = self.connection.getpeername()[0]
+            local = self.connection.getsockname()[0]
+        except OSError:
+            return False
+        server_port = str(self.server.server_port)
+        allowed = {
+            ("localhost", server_port),
+            ("127.0.0.1", server_port),
+            ("::1", server_port),
+            (_split_host(str(self.server.server_address[0]))[0], server_port),
+            (_split_host(str(local))[0], server_port),
+        }
+        if (host_name, host_port) in allowed:
+            return True
+        # A local port forward keeps the browser on loopback but changes the port.
+        return _loopback(host_name) and _loopback(peer)
+
+    def do_POST(self):
+        if not self.local_control_allowed():
             return self.send(
-                {"error": "Only same-origin local controls are accepted"}, 403
+                {
+                    "error": (
+                        "Only same-origin local controls are accepted. "
+                        f"Open http://127.0.0.1:{self.server.server_port} "
+                        "and use the controls on that page."
+                    )
+                },
+                403,
             )
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
             return self.send({"error": "Content-Type must be application/json"}, 415)

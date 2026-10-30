@@ -11,6 +11,7 @@
     <title>Lantern Bay · Village Sim</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/style.css" />
+    <script src="/sound.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -60,6 +61,15 @@
           <path
             d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3Z"
           />
+        </symbol>
+        <symbol id="i-sound" viewBox="0 0 24 24">
+          <path d="M4 9v6h4l5 4V5L8 9H4Z" />
+          <path d="M16.5 8.5a5 5 0 0 1 0 7" />
+          <path d="M18.8 6.2a8 8 0 0 1 0 11.6" />
+        </symbol>
+        <symbol id="i-muted" viewBox="0 0 24 24">
+          <path d="M4 9v6h4l5 4V5L8 9H4Z" />
+          <path d="M17 9l5 6M22 9l-5 6" />
         </symbol>
       </defs>
     </svg>
@@ -125,6 +135,16 @@
             aria-label="Village settings"
           >
             <svg><use href="#i-settings" /></svg>
+          </button>
+          <button
+            id="sound"
+            class="icon-button"
+            type="button"
+            aria-pressed="false"
+            title="Play village sounds"
+            aria-label="Play village sounds"
+          >
+            <svg><use href="#i-muted" /></svg>
           </button>
         </div>
       </div>
