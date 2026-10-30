@@ -204,7 +204,9 @@ the village sim's simple grid.
    coding harness agent, similar to how agents join the running world in Eastern Paradise
    (`jimskin03/eastern-paradise`), and bring their own model provider when they join. The LLM is an
    optional per-agent add-on, not a server-level dependency.
-5. **Agent count and step size.** How many agents, and how long is one step in game time?
+5. **Agent count and step size (agent count resolved, step size open).** Agent count is a runtime
+   setting in the web UI, not a fixed constant. The default is three agents, adjustable up or down
+   from settings. Still open: how long is one step in game time?
 6. **Memory depth.** Is a short rolling memory enough, or do we want long-term recall
    across many game days from the start?
 7. **Player role.** Pure observer, or can the user talk to agents and drop events in
