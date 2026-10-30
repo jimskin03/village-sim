@@ -11,9 +11,9 @@ from urllib.request import Request, urlopen
 
 
 def plan(observation):
-    # Your provider receives persona, memory, places, nearby agents and time.
-    # This example works offline by using the default brain's suggestion.
-    return observation["suggested_action"]
+    # Keep the current rule-selected activity. A model may fill result, mood,
+    # speech and promise only from the observation's corresponding *_options.
+    return {**observation["suggested_action"], "mood": "hopeful"}
 
 
 def main():

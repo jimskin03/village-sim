@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .simulation import Simulation
+from .persistence import export_session, read_session, restore_session, write_session
 
 
 def main():
@@ -21,7 +22,9 @@ def main():
         "--agents", type=int, default=3, choices=range(1, 9), metavar="1–8"
     )
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--output", type=Path, help="write a replayable JSON recording")
+    parser.add_argument("--output", type=Path, help="write a replayable and resumable JSON story")
+    parser.add_argument("--state-file", type=Path, help="checkpoint path (live default: .village-sim/session.json)")
+    parser.add_argument("--no-persist", action="store_true", help="start fresh and disable automatic disk saves")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
@@ -34,10 +37,18 @@ def main():
     if args.steps < 0 or args.interval <= 0:
         parser.error("steps must be nonnegative and interval must be positive")
     if args.headless:
-        sim = Simulation(args.agents, args.seed)
+        state_path = None if args.no_persist else args.state_file
+        try:
+            sim = restore_session(read_session(state_path)) if state_path and state_path.exists() else Simulation(args.agents, args.seed)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
         snapshots = [sim.snapshot()]
         for _ in range(args.steps):
             snapshots.append(sim.tick())
+            if state_path:
+                write_session(state_path, export_session(sim))
+        if state_path and not args.steps:
+            write_session(state_path, export_session(sim))
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(
@@ -46,6 +57,7 @@ def main():
                         "schema_version": 1,
                         "world": sim.world.config,
                         "snapshots": snapshots,
+                        "session": export_session(sim),
                     },
                     ensure_ascii=False,
                 )
@@ -62,7 +74,11 @@ def main():
     else:
         from .server import serve
 
-        serve(args.host, args.port, args.agents, args.seed, args.interval)
+        state_path = None if args.no_persist else args.state_file or Path(".village-sim/session.json")
+        try:
+            serve(args.host, args.port, args.agents, args.seed, args.interval, state_path)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
 
 
 if __name__ == "__main__":

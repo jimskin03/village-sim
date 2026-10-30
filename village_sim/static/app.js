@@ -112,7 +112,11 @@ function connectionLabel() {
 }
 function acceptLive(next) {
   if (liveState && next.revision < liveState.revision) return;
+  if (next.persistence_error && next.persistence_error !== liveState?.persistence_error)
+    toast(next.persistence_error);
   liveState = next;
+  $("#persistence-status").textContent = next.persistence_error || "The village is saved after every step.";
+  $("#persistence-status").classList.toggle("save-error", Boolean(next.persistence_error));
   if (!recording) render(next);
 }
 function render(next) {
@@ -128,6 +132,11 @@ function render(next) {
         : hour < 18
           ? "AFTERNOON"
           : "EVENING";
+  const light = hour < 6 || hour >= 20 ? "night"
+    : hour < 11 ? "morning" : hour < 17 ? "noon" : "dusk";
+  $("#scene").dataset.light = light;
+  $("#hearth-light").hidden = !(state.pantry?.hearth_lit && (hour >= 18 || hour < 6));
+  $(".scene-moon").textContent = light === "night" ? "☾" : light === "dusk" ? "◒" : "☀";
   $("#day").textContent = `DAY ${state.day} · ${period}`;
   $("#clock-time").textContent = state.time;
   $("#weather-text").textContent =
@@ -143,7 +152,13 @@ function render(next) {
         ? "Good company, under a hundred little lights."
         : hour < 6
           ? "A quiet village. The tide keeps its own time."
-          : "Lanterns on. The world carries on.";
+          : light === "morning"
+            ? "Cool air over the bay. A new day’s work begins."
+            : light === "noon"
+              ? "Clear light on the water. Supper starts here."
+              : light === "dusk"
+                ? "Gold on the roofs. Time to count the supper crate."
+                : "Lanterns on. The world carries on.";
   $("#scene-mode").textContent = recording
     ? "A RECORDED STORY"
     : state.paused
@@ -174,11 +189,44 @@ function render(next) {
   document.querySelectorAll("[data-event]").forEach((b) => {
     b.disabled = Boolean(recording);
   });
+  renderStateMarkers();
   renderSprites();
   renderCards();
   renderDetails();
   renderJournal();
   connectionLabel();
+}
+function placePosition(place) {
+  return `left:${((place.x + 0.5) * 32 / 1280) * 100}%;top:${((place.y + 0.5) * 32 / 720) * 100}%`;
+}
+function renderStateMarkers() {
+  const pantry = state.pantry;
+  const container = $("#state-markers");
+  if (!pantry) { container.innerHTML = ""; return; }
+  const need = state.agents.length;
+  const markers = [
+    { place: "jetty", icon: "▤", text: `Crate · ${pantry.fish} fish`, short: pantry.fish < need,
+      note: state.weather === "storm" ? "Jetty closed in the storm" : `Supper needs ${need} fish` },
+    { place: "garden", icon: "❧", text: `Rack · ${pantry.herbs} herbs`, short: pantry.herbs < Math.ceil(need / 3),
+      note: `Supper needs ${Math.ceil(need / 3)} herb bundles` },
+    { place: "shore", icon: "⚓", text: `Boats · ${pantry.boat_condition}`, short: pantry.boat_condition !== "sound",
+      note: "The village boat condition" },
+    { place: "nets", icon: "⌗", text: `Net · ${pantry.net_condition}`, short: pantry.net_condition !== "sound",
+      note: "A damaged net needs mending" },
+    { place: "fire", icon: pantry.hearth_lit ? "♨" : "○", text: pantry.hearth_lit ? "Hearth lit" : "Hearth resting",
+      note: "The hearth is lit after dark" },
+  ];
+  if (state.visitor) markers.push({ place: "guest_home", icon: "✧",
+    text: `${state.visitor.name || "Festival guest"} · visiting`, note: "A festival visitor is staying at the guest cottage" });
+  container.innerHTML = markers.map((marker) => {
+    const place = world.places.find((p) => p.id === marker.place);
+    if (!place) return "";
+    return `<span class="state-marker${marker.short ? " shortage" : ""}" style="${placePosition(place)}" title="${esc(marker.note)}"><span aria-hidden="true">${marker.icon}</span> ${esc(marker.text)}${marker.short ? '<span class="sr-only"> · needs attention</span>' : ""}</span>`;
+  }).join("");
+  if (state.visitor) {
+    const place = world.places.find((p) => p.id === "guest_home");
+    if (place) container.insertAdjacentHTML("beforeend", `<span class="festival-visitor" style="${placePosition(place)};--agent-color:#dfc99b" role="img" aria-label="${esc(state.visitor.name || "A visitor")} at the guest cottage"><span class="sprite-shadow"></span><span class="sprite-legs"></span><span class="sprite-body"></span><span class="sprite-head"></span></span>`);
+  }
 }
 function renderSprites() {
   const container = $("#villagers");
@@ -191,7 +239,7 @@ function renderSprites() {
       el = document.createElement("button");
       el.dataset.id = a.id;
       el.innerHTML =
-        '<span class="sprite-shadow"></span><span class="sprite-legs"></span><span class="sprite-body"></span><span class="sprite-head"></span><span class="sprite-name"></span><span class="speech" hidden></span>';
+        '<span class="sprite-shadow"></span><span class="sprite-legs"></span><span class="sprite-body"></span><span class="sprite-head"></span><span class="sprite-name"></span><span class="sprite-brain"></span><span class="sprite-message" hidden><span class="speech" hidden></span><span class="thought" hidden></span></span>';
       el.addEventListener("click", () => selectAgent(a.id));
       container.append(el);
     }
@@ -202,10 +250,20 @@ function renderSprites() {
     el.setAttribute("aria-label", `${a.name}, ${a.activity}. Select villager.`);
     el.setAttribute("aria-pressed", String(a.id === selected));
     el.querySelector(".sprite-name").textContent = a.name;
-    const speech = el.querySelector(".speech");
+    const brain = !recording && state.brains?.[a.id];
+    const brainLabel = brain?.status === "thinking" ? "thinking / rules"
+      : brain?.status === "ready" ? "model" : "rules";
+    const badge = el.querySelector(".sprite-brain");
+    badge.textContent = brainLabel;
+    badge.classList.toggle("thinking", brain?.status === "thinking");
+    const speech = el.querySelector(".speech"), thought = el.querySelector(".thought");
     speech.hidden = !a.speech;
     speech.textContent = a.speech || "";
-    el.style.zIndex = a.speech
+    thought.hidden = !a.thought;
+    thought.textContent = a.thought ? `Thinking: ${a.thought}` : "";
+    el.querySelector(".sprite-message").hidden = !(a.speech || a.thought);
+    el.setAttribute("aria-label", `${a.name}, ${a.activity}. ${brainLabel}.${a.thought ? ` Thinking: ${a.thought}` : ""} Select villager.`);
+    el.style.zIndex = a.speech || a.thought
       ? 20
       : a.id === selected
         ? 10
@@ -272,16 +330,17 @@ function renderGoals(agent) {
 }
 function renderRelationships(agent) {
   const connections = Object.entries(agent.relationships).sort(
-    ([first, a], [second, b]) => b - a || first.localeCompare(second),
+    ([first], [second]) => first.localeCompare(second),
   );
   const heading = '<p class="detail-label">FAMILIAR FACES</p>';
   if (!connections.length)
     return `${heading}<p class="empty-note">Friendships begin with a conversation. There are still people to get to know.</p>`;
   return `${heading}<div class="relationship-list">${connections
-    .map(([id, count]) => {
+    .map(([id, fact]) => {
       const other = state.agents.find((a) => a.id === id);
       const name = other?.name || id.charAt(0).toUpperCase() + id.slice(1);
-      return `<button class="relationship-item" data-friend="${esc(id)}"${other ? "" : " disabled"}><span>${esc(name)}<small>${count >= 3 ? "Friend" : "Getting acquainted"}${other ? "" : " · Away from the village"}</small></span><span class="relationship-meta">${count} conversation${count === 1 ? "" : "s"}${other ? " ›" : ""}</span></button>`;
+      const sharedFact = typeof fact === "string" ? fact : `${agent.name} and ${name} have shared conversations.`;
+      return `<button class="relationship-item" data-friend="${esc(id)}"${other ? "" : " disabled"}><span>${esc(name)}<small>${esc(sharedFact)}${other ? "" : " · Away from the village"}</small></span>${other ? '<span class="relationship-meta" aria-hidden="true">›</span>' : ""}</button>`;
     })
     .join("")}</div>`;
 }
@@ -299,7 +358,7 @@ function renderDetails() {
   if (tab === "story") {
     const destination =
       world?.places.find((p) => p.id === a.destination)?.name || a.destination;
-    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}</p><p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
+    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}${a.mood ? ` · ${esc(a.mood)}` : ""}</p>${a.thought ? `<p class="agent-thought">${esc(a.thought)}</p>` : ""}<p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
     detail.querySelectorAll("[data-friend]").forEach((button) =>
       button.addEventListener("click", () => selectAgent(button.dataset.friend)),
     );
@@ -357,7 +416,7 @@ function renderBrain(agent) {
     : agent.provider
       ? `${agent.provider} · external harness`
       : "Rule-based routines";
-  $("#llm-open").textContent = brain ? "LLM settings" : "Connect LLM";
+  $("#llm-open").textContent = brain ? "LLM settings" : "Connect a brain";
   $("#llm-open").disabled = Boolean(recording);
   if ($("#llm-settings").open && brainAgent) updateBrainFeedback();
 }
@@ -375,7 +434,7 @@ function updateBrainFeedback() {
     Boolean(brain?.error || external || !agent),
   );
   $("#llm-connect").disabled = !agent || external;
-  $("#llm-connect").textContent = brain ? "Update connection" : "Connect LLM";
+  $("#llm-connect").textContent = brain ? "Update connection" : "Connect a brain";
   $("#llm-disconnect").hidden = !brain;
   $("#llm-think").hidden = !brain;
   $("#llm-think").disabled = brain?.status === "thinking";
@@ -385,12 +444,10 @@ $("#llm-open").addEventListener("click", () => {
   const agent = liveState?.agents.find((a) => a.id === brainAgent);
   if (!agent) return;
   const brain = liveState.brains?.[brainAgent];
-  $("#llm-title").textContent = `${agent.name}’s LLM`;
+  $("#llm-title").textContent = `${agent.name}’s brain`;
   $("#llm-endpoint").value = brain?.base_url || "https://api.openai.com/v1";
-  $("#llm-provider").value =
-    $("#llm-endpoint").value === "https://api.openai.com/v1"
-      ? "openai"
-      : "custom";
+  $("#llm-provider").value = providerPreset($("#llm-endpoint").value);
+  $("#llm-advanced").open = $("#llm-provider").value === "custom";
   $("#llm-model").value = brain?.model || "";
   $("#llm-key").value = "";
   $("#llm-key").placeholder = brain?.has_key
@@ -399,6 +456,7 @@ $("#llm-open").addEventListener("click", () => {
   $("#llm-key-note").textContent = brain?.has_key
     ? "Leave blank to keep the current key for this endpoint. Enter a new key when changing endpoints."
     : "Optional for local servers. Keys are kept in server memory for this session.";
+  $("#llm-key").closest("label").hidden = $("#llm-provider").value === "ollama";
   $("#llm-frequency").value = brain?.every_steps || 8;
   updateBrainFeedback();
   $("#llm-settings").showModal();
@@ -410,17 +468,30 @@ $("#llm-settings").addEventListener("close", () => {
 $("#llm-settings").addEventListener("click", (e) => {
   if (e.target === e.currentTarget) e.currentTarget.close();
 });
+function providerPreset(endpoint) {
+  const base = endpoint.replace(/\/$/, "");
+  if (base === "https://api.openai.com/v1") return "openai";
+  if (/^http:\/\/(localhost|127\.0\.0\.1):11434\/v1$/.test(base)) return "ollama";
+  return "custom";
+}
 $("#llm-provider").addEventListener("change", (e) => {
-  if (e.target.value === "openai")
+  const preset = e.target.value;
+  if (preset === "openai") {
     $("#llm-endpoint").value = "https://api.openai.com/v1";
-  else if ($("#llm-endpoint").value === "https://api.openai.com/v1")
-    $("#llm-endpoint").value = "";
+    if ($("#llm-model").value === "llama3.2") $("#llm-model").value = "";
+    $("#llm-key-note").textContent = "Your key stays in server memory. It is never saved with the story.";
+  } else if (preset === "ollama") {
+    $("#llm-endpoint").value = "http://localhost:11434/v1";
+    $("#llm-model").value = "llama3.2";
+    $("#llm-key").value = "";
+    $("#llm-key-note").textContent = "Run Ollama on the village server’s computer with this model installed. No API key needed.";
+  }
+  $("#llm-advanced").open = preset === "custom";
+  $("#llm-key").closest("label").hidden = preset === "ollama";
 });
 $("#llm-endpoint").addEventListener("input", () => {
-  $("#llm-provider").value =
-    $("#llm-endpoint").value.replace(/\/$/, "") === "https://api.openai.com/v1"
-      ? "openai"
-      : "custom";
+  $("#llm-provider").value = providerPreset($("#llm-endpoint").value);
+  $("#llm-key").closest("label").hidden = $("#llm-provider").value === "ollama";
 });
 $("#llm-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -467,16 +538,29 @@ $("#llm-think").addEventListener("click", async () => {
   }
 });
 function renderJournal() {
-  const journal = $("#journal"),
-    scroll = journal.scrollTop;
-  journal.innerHTML = [...state.events]
-    .reverse()
-    .slice(0, 35)
-    .map(
-      (e) =>
-        `<div class="journal-entry ${e.kind === "conversation" ? "conversation" : ""}"><time title="Day ${e.day}">${esc(e.time)}</time><p>${esc(e.text)}</p></div>`,
-    )
-    .join("");
+  const journal = $("#journal"), scroll = journal.scrollTop;
+  const choresOpen = Boolean(journal.querySelector(".chore-log[open]"));
+  const supperOpen = Boolean($("#supper-ledger details[open]"));
+  const reflections = state.reflections || state.events.filter((e) => e.kind === "reflection");
+  $("#reflections").innerHTML = [...reflections].reverse().map((e) =>
+    `<article class="pinned-reflection"><small>✧ MIDNIGHT · DAY ${esc(e.reflected_day ?? e.day)}</small><p>${esc(e.text)}</p></article>`,
+  ).join("") || '<p class="empty-note">At midnight, the village keeps one line from today.</p>';
+  const lastSupper = state.suppers?.at(-1);
+  $("#supper-ledger").innerHTML = lastSupper
+    ? `<details class="supper-history"${supperOpen ? " open" : ""}><summary>Supper ledger · Day ${esc(lastSupper.day)}</summary>${[...state.suppers].reverse().map((supper) => `<p>${esc(supper.text || supper.summary || `Day ${supper.day}: ${supper.fish ?? supper.fish_spent ?? 0} fish, ${supper.herbs ?? supper.herbs_spent ?? 0} herbs`)}</p>`).join("")}</details>`
+    : "";
+  const visible = [...state.events].reverse().filter((e) => e.kind !== "reflection");
+  const chores = visible.filter((e) => e.kind === "work" || e.kind === "work_summary");
+  const entries = visible.filter((e) => e.kind !== "work" && e.kind !== "work_summary").slice(0, 35);
+  const eventHTML = (e) => `<div class="journal-entry ${e.kind === "conversation" ? "conversation" : ""}"><time title="Day ${esc(e.day)}">${esc(e.time)}</time><p>${esc(e.text)}</p></div>`;
+  const summaries = [...(state.work_summaries || [])].reverse().map((row) => {
+    const name = state.agents.find((a) => a.id === row.agent)?.name || row.agent;
+    const place = world.places.find((p) => p.id === row.place)?.name || row.place;
+    const counts = Object.entries(row.results).map(([result, count]) => `${count} ${result.replaceAll("_", " ")}`).join(", ");
+    return `<p class="chore-summary"><small>DAY ${esc(row.day)}</small>${esc(name)} · ${esc(place)}<br>${esc(counts)}</p>`;
+  }).join("");
+  journal.innerHTML = entries.map(eventHTML).join("")
+    + (chores.length || summaries ? `<details class="chore-log"${choresOpen ? " open" : ""}><summary>Work around the village</summary>${summaries || chores.map(eventHTML).join("")}</details>` : "");
   journal.scrollTop = scroll;
 }
 function renderPlaces() {
@@ -715,7 +799,7 @@ function validRecording(data) {
           typeof a.relationships === "object" &&
           !Array.isArray(a.relationships) &&
           Object.values(a.relationships).every(
-            (count) => Number.isInteger(count) && count >= 0,
+            (fact) => typeof fact === "string" || (Number.isInteger(fact) && fact >= 0),
           ) &&
           (a.goals === undefined ||
             (Array.isArray(a.goals) &&
@@ -748,12 +832,15 @@ $("#import").addEventListener("change", async (e) => {
     replayPlaying = false;
     clearInterval(replayTimer);
     $("#replay-bar").hidden = false;
+    $("#resume-story").disabled = !data.session;
+    $("#resume-story").title = data.session
+      ? "Continue from the last saved moment" : "Older recordings can only be replayed";
     $("#replay-position").max = data.snapshots.length - 1;
     $("#settings").close();
     closePanel();
     renderPlaces();
     renderReplay();
-    toast("Recording opened. The live village continues in the background.");
+    toast(data.session ? "Story opened. Replay it or resume from its last saved moment." : "Recording opened. This older recording supports replay only.");
   } catch (error) {
     toast(
       error instanceof SyntaxError
@@ -772,6 +859,26 @@ function renderReplay() {
 $("#replay-position").addEventListener("input", (e) => {
   replayIndex = Number(e.target.value);
   renderReplay();
+});
+$("#resume-story").addEventListener("click", async () => {
+  if (!recording?.session) return;
+  if (!confirm("Resume this saved story? It replaces the live village and pauses at the last saved moment. Save the live story first if you want to keep it.")) return;
+  $("#resume-story").disabled = true;
+  try {
+    const next = await post("/api/session/resume", { session: recording.session });
+    clearInterval(replayTimer);
+    replayPlaying = false;
+    recording = null;
+    world = await fetch("/api/world").then((r) => r.json());
+    $("#replay-bar").hidden = true;
+    renderPlaces();
+    acceptLive(next);
+    $("#play").focus({ preventScroll: true });
+    toast("Story resumed and paused. Press play to continue; reconnect any model brains.");
+  } catch (error) {
+    toast(error.message);
+    $("#resume-story").disabled = !recording?.session;
+  }
 });
 $("#return-live").addEventListener("click", async () => {
   clearInterval(replayTimer);
@@ -815,7 +922,8 @@ function atmosphere(now) {
       ctx.stroke();
     }
   } else {
-    for (let i = 0; i < 17; i++) {
+    const night = state && (state.minute < 360 || state.minute >= 1080);
+    for (let i = 0; night && i < 17; i++) {
       const x = 100 + ((i * 79) % 770) + Math.sin(seconds * 0.35 + i) * 17;
       const y = 230 + ((i * 97) % 390) + Math.cos(seconds * 0.4 + i) * 12;
       const alpha = 0.15 + (Math.sin(seconds * 1.2 + i) + 1) * 0.2;
@@ -824,7 +932,7 @@ function atmosphere(now) {
       ctx.arc(x, y, 1.6, 0, Math.PI * 2);
       ctx.fill();
     }
-    if (state?.festival) {
+    if (state?.festival && night) {
       for (let i = 0; i < 10; i++) {
         const x = 260 + i * 65 + Math.sin(seconds + i) * 8,
           y = 650 - ((seconds * 20 + i * 70) % 650);

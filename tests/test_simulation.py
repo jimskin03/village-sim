@@ -86,21 +86,15 @@ class SimulationTests(unittest.TestCase):
             sim.submit("mara", {"step": -1, "place": "fire", "activity": "resting"})
         with self.assertRaises(ValueError):
             sim.submit("mara", {"step": 0, "place": "ocean", "activity": "swimming"})
-        sim.submit(
-            "mara",
-            {
-                "step": 0,
-                "place": "garden",
-                "activity": "picking herbs",
-                "speech": "Hello!",
-            },
-        )
-        sim.tick()
-        self.assertEqual(sim.agents["mara"].destination, "garden")
-        self.assertEqual(sim.agents["mara"].speech, "Hello!")
+        with self.assertRaises(ValueError):
+            sim.submit("mara", {"step": 0, "place": "garden", "activity": "picking herbs"})
+        sim.submit("mara", {"step": 0, "mood": "hopeful", "thought": "Supper is coming."})
         sim.tick()
         self.assertEqual(sim.agents["mara"].destination, "fire")
-        sim.submit("mara", {"step": sim.step, "place": "jetty", "activity": "fishing"})
+        self.assertEqual(sim.agents["mara"].thought, "Supper is coming.")
+        sim.tick()
+        self.assertIsNone(sim.agents["mara"].thought)
+        sim.submit("mara", {"step": sim.step})
         sim.inject("storm")
         sim.tick()
         self.assertEqual(sim.agents["mara"].destination, "mara_home")

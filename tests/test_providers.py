@@ -6,7 +6,7 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from village_sim.providers import ProviderConfig, ProviderError, plan
+from village_sim.providers import ProviderConfig, ProviderError, plan, validate_slots
 from village_sim.server import Server, Session
 from village_sim.simulation import Simulation
 
@@ -30,6 +30,8 @@ class MockProvider(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         content = self.server.content
+        if content is None:
+            content = json.dumps({"mood": "hopeful", "thought": "I hope we have enough for supper."})
         data = {"choices": [{"message": {"content": content}}]}
         try:
             self.wfile.write(json.dumps(data).encode())
@@ -45,13 +47,7 @@ class ProviderTests(unittest.TestCase):
         self.provider.release = Event()
         self.provider.release.set()
         self.provider.status = 200
-        self.provider.content = json.dumps(
-            {
-                "place": "garden",
-                "activity": "studying the herbs",
-                "speech": "The mint smells lovely.",
-            }
-        )
+        self.provider.content = None
         self.provider_thread = Thread(target=self.provider.serve_forever, daemon=True)
         self.provider_thread.start()
         self.base = f"http://127.0.0.1:{self.provider.server_port}/v1"
@@ -121,23 +117,14 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("memory", context["agent"])
         self.assertIn("recent_memories", context)
         self.assertIn("JSON", call["body"]["messages"][0]["content"])
-        for index in range(4):
+        self.assertIn("mood_options", context)
+        self.assertIn("result_options", context)
+        self.assertIn("Do not invent", call["body"]["messages"][0]["content"])
+        for _ in range(4):
             state = self.request("/api/control", {"action": "step"})
-            self.assertEqual(state["agents"][0]["destination"], "garden")
-            if index == 0:
-                self.assertEqual(
-                    state["agents"][0]["speech"], "The mint smells lovely."
-                )
-            else:
-                self.assertNotEqual(
-                    state["agents"][0]["speech"], "The mint smells lovely."
-                )
-        self.assertEqual(
-            sum(
-                "The mint smells lovely." in e["text"] for e in self.session.sim.events
-            ),
-            1,
-        )
+            self.assertEqual(state["agents"][0]["destination"], "fire")
+            self.assertEqual(state["agents"][0]["mood"], "hopeful")
+            self.assertEqual(state["agents"][0]["thought"], "I hope we have enough for supper.")
         self.assertEqual(len(self.provider.calls), 1)
         state = self.request("/api/state")
         self.assertEqual(state["brains"]["mara"]["decisions"], 1)
@@ -220,13 +207,46 @@ class ProviderTests(unittest.TestCase):
                     {"base_url": self.base, "model": "test", **invalid}
                 )
         self.provider.content = (
-            '```json\n{"place":"fire","activity":"sharing stories"}\n```'
+            '```json\n{"mood":"content"}\n```'
         )
         config = ProviderConfig.parse(
             {"base_url": self.base + "/chat/completions", "model": "local"}
         )
         self.assertEqual(plan(config, Simulation().observe("mara"))["place"], "fire")
         self.assertIsNone(self.provider.calls[-1]["authorization"])
+
+
+class SlotValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.observation = {
+            "suggested_action": {"place": "jetty", "activity": "fishing for supper"},
+            "result_options": ["silver_fish", "empty_net"],
+            "mood_options": ["content", "hopeful", "worried", "tired"],
+            "promise_options": ["Mara owes Lin a fish for the herbs."],
+            "speech_options": ["The net came back empty this morning."],
+        }
+
+    def test_only_offered_slots_can_be_filled(self):
+        slots = {"result": "empty_net", "mood": "worried",
+                 "promise": self.observation["promise_options"][0],
+                 "speech": self.observation["speech_options"][0],
+                 "thought": "I should try the shore."}
+        result = validate_slots(slots, self.observation)
+        self.assertEqual(result, {**self.observation["suggested_action"], **slots})
+
+    def test_invented_actions_facts_and_malformed_values_are_rejected(self):
+        for value in ({"activity": "flying"}, {"place": "garden"},
+                      {"result": "a thousand fish"}, {"mood": "invincible"},
+                      {"promise": "Tom owes me a fortune"}, {"speech": "Hello!"},
+                      {"thought": "x" * 201}, {"result": ["empty_net"]},
+                      {"fish": 1000}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_slots(value, self.observation)
+
+    def test_null_slots_leave_the_rules_in_charge(self):
+        result = validate_slots({"result": None, "speech": None}, self.observation)
+        self.assertEqual(result["place"], "jetty")
+        self.assertIsNone(result["result"])
 
 
 if __name__ == "__main__":

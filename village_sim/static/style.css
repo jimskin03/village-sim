@@ -1683,3 +1683,205 @@ body:has(#replay-bar:not([hidden])) .map-panel {
 body:has(#replay-bar:not([hidden])) .toast {
   bottom: 176px;
 }
+
+/* The painting keeps its geography while the clock changes its light. */
+.scene img {
+  transition: filter 2s ease;
+}
+.scene[data-light="morning"] img {
+  filter: brightness(1.45) saturate(0.72) contrast(0.85);
+}
+.scene[data-light="noon"] img {
+  filter: brightness(1.8) saturate(0.82) contrast(0.8);
+}
+.scene[data-light="dusk"] img {
+  filter: brightness(1.2) sepia(0.25) saturate(1.1);
+}
+.scene[data-light="night"] img {
+  filter: brightness(0.85) saturate(0.95);
+}
+#daylight-wash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: background 2s ease;
+  mix-blend-mode: soft-light;
+}
+[data-light="morning"] #daylight-wash {
+  background: #9ed8ef66;
+}
+[data-light="noon"] #daylight-wash {
+  background: #fff3b75c;
+}
+[data-light="dusk"] #daylight-wash {
+  background: #edaa5d6b;
+}
+[data-light="night"] #daylight-wash {
+  background: #142b4d35;
+}
+#hearth-light {
+  position: absolute;
+  left: 26.25%;
+  top: 73.3%;
+  width: 7%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(ellipse, #ffd27688 0, #eb8b3944 30%, transparent 70%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: hearth-flicker 3s ease-in-out infinite alternate;
+}
+@keyframes hearth-flicker {
+  to { opacity: 0.65; transform: translate(-50%, -50%) scale(0.9); }
+}
+#state-markers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.state-marker {
+  position: absolute;
+  transform: translate(-50%, 12px);
+  white-space: nowrap;
+  border: 1px solid #a6c3a877;
+  border-radius: 5px;
+  background: #173b32e8;
+  color: #e9efd8;
+  padding: 4px 7px;
+  font-size: 10px;
+  line-height: 1.4;
+  box-shadow: 0 2px 6px #06202c44;
+}
+.state-marker.shortage {
+  border-color: #f0c38c;
+  background: #5f3929ed;
+  color: #ffe6bb;
+}
+.state-marker.shortage::before {
+  content: "!";
+  display: inline-block;
+  margin-right: 4px;
+  font-weight: bold;
+}
+.sprite-brain {
+  position: absolute;
+  top: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: #1f343ae8;
+  color: #cfdfcf;
+  border: 1px solid #8aa59b55;
+  border-radius: 8px;
+  padding: 2px 5px;
+  font-size: 7px;
+}
+.sprite-brain.thinking {
+  color: #ffe0a6;
+  border-color: #e1b76f;
+}
+.sprite-message {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  width: 165px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 10;
+}
+.sprite-message .speech {
+  position: relative;
+  inset: auto;
+  transform: none;
+  min-width: 0;
+  max-width: none;
+  display: block;
+}
+.sprite-message .speech:after { display: none; }
+.thought {
+  display: block;
+  border-radius: 5px;
+  border: 1px solid #c4cbb36b;
+  background: #263a38ed;
+  padding: 6px 8px;
+  color: #ece9ce;
+  font: italic 10px/1.45 Georgia, serif;
+  overflow-wrap: anywhere;
+}
+.agent-thought {
+  padding: 10px 12px;
+  border-left: 2px solid #a5b398;
+  color: #617360;
+  background: #eaf0e2;
+  font: italic 14px/1.6 Georgia, serif;
+}
+.relationship-item small {
+  line-height: 1.5;
+  color: #697b61;
+}
+.pinned-reflection {
+  background: #ecebdc;
+  border: 1px solid #c9cdb3;
+  border-left: 3px solid #b79353;
+  border-radius: 5px;
+  padding: 14px;
+  margin: 0 0 12px;
+}
+.pinned-reflection small {
+  color: #8c794e;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.pinned-reflection p {
+  font: 15px/1.65 Georgia, serif;
+  margin: 8px 0 0;
+  color: #4b6250;
+}
+.supper-history,
+.chore-log {
+  border-block: 1px solid #d4ddc6;
+  margin: 15px 0;
+  padding: 13px 0;
+}
+.supper-history summary,
+.chore-log summary,
+.llm-advanced summary {
+  color: #536b51;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 0;
+}
+.supper-history p {
+  color: #687b60;
+  font: 13px/1.6 Georgia, serif;
+}
+.chore-log[open] summary { margin-bottom: 18px; }
+.llm-advanced {
+  background: #e9eee2;
+  border-radius: 5px;
+  padding: 10px 12px;
+}
+.llm-advanced label { margin-top: 13px; }
+#about a { color: #365f4c; text-underline-offset: 3px; }
+.replay-bar { width: min(800px, calc(100vw - 40px)); }
+@media (max-width: 700px) {
+  .replay-bar { width: auto; }
+  .state-marker { font-size: 9px; }
+}
+.festival-visitor {
+  position: absolute;
+  width: 32px;
+  height: 44px;
+  transform: translate(-50%, -100%);
+}
+.chore-summary {
+  font: 13px/1.6 Georgia, serif;
+  color: #687b60;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #d4ddc6;
+}
+.chore-summary small { display: block; font: 9px Arial, sans-serif; margin-bottom: 5px; }
+.save-error { color: #a04d2e; }

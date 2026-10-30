@@ -8,6 +8,10 @@ class Action:
     place: str
     activity: str
     speech: str | None = None
+    result: str | None = None
+    mood: str | None = None
+    promise: str | None = None
+    thought: str | None = None
 
 
 def daily_plan(agent) -> list[dict]:
@@ -34,6 +38,10 @@ def decide(agent, observation: dict) -> Action:
     if observation["festival"]:
         return Action("fire", "celebrating the lantern festival")
     hour = observation["minute"] // 60
+    pantry = observation.get("pantry", {})
+    if 6 <= hour < 18 and hour not in (13, 14):
+        if agent.role in ("fisher", "boatwright") and pantry.get("net_condition") == "torn":
+            return Action("nets", "mending the torn village net")
     item = next(p for p in reversed(agent.plan) if p["hour"] <= hour)
     work = next((g for g in agent.goals if g["id"] == "work"), None)
     if (6 <= hour < 13 or 15 <= hour < 18) and work and not work["completed"]:

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from . import providers
 from .simulation import Simulation
+from .persistence import export_session, read_session, restore_session, write_session
 
 STATIC = Path(__file__).parent / "static"
 
@@ -46,11 +47,19 @@ class Brain:
 
 
 class Session:
-    def __init__(self, count=3, seed=7, interval=2.0):
+    def __init__(self, count=3, seed=7, interval=2.0, state_path=None):
         self.condition = Condition()
-        self.sim = Simulation(count, seed)
-        self.interval = interval
-        self.paused = False
+        self.state_path = Path(state_path) if state_path else None
+        saved = read_session(self.state_path) if self.state_path and self.state_path.exists() else None
+        self.sim = restore_session(saved) if saved is not None else Simulation(count, seed)
+        settings = saved.get("settings", {}) if saved else {}
+        self.interval = settings.get("interval", interval)
+        if type(self.interval) not in (int, float) or self.interval <= 0:
+            raise ValueError("Invalid saved interval")
+        self.paused = settings.get("paused", False)
+        if type(self.paused) is not bool:
+            raise ValueError("Invalid saved playback status")
+        self.persistence_error = None
         self.running = True
         self.revision = 0
         self.tokens: dict[str, str] = {}
@@ -58,6 +67,7 @@ class Session:
         self.workers: set[str] = set()
         self.recording = [self.sim.snapshot()]
         self.thread = Thread(target=self._run, daemon=True)
+        self.persist()
 
     def state(self):
         return {
@@ -66,9 +76,44 @@ class Session:
             "interval": self.interval,
             "revision": self.revision,
             "brains": {aid: brain.public() for aid, brain in self.brains.items()},
+            "persistence_error": self.persistence_error,
         }
 
+    def checkpoint(self):
+        return {
+            **export_session(self.sim),
+            "settings": {"interval": self.interval, "paused": self.paused},
+        }
+
+    def persist(self):
+        if self.state_path:
+            try:
+                write_session(self.state_path, self.checkpoint())
+                self.persistence_error = None
+            except OSError:
+                self.persistence_error = "The village could not be saved to disk. Check the state-file path and available space."
+
+    def resume(self, data):
+        candidate = restore_session(data)
+        # Validate and write first: neither malformed input nor a failed disk write
+        # may replace the running village.
+        if self.state_path:
+            try:
+                write_session(self.state_path, {
+                    **export_session(candidate),
+                    "settings": {"interval": self.interval, "paused": True},
+                })
+            except OSError:
+                raise ValueError("The resumed village could not be saved to disk") from None
+        self.sim = candidate
+        self.paused = True
+        self.brains.clear()
+        self.tokens.clear()
+        self.recording = [candidate.snapshot()]
+        self.publish(record=False)
+
     def publish(self, record=True):
+        self.persist()
         self.revision += 1
         if record:
             self.recording.append(self.sim.snapshot())
@@ -124,7 +169,13 @@ class Session:
                 action = {**brain.action, "step": self.sim.step}
                 if not brain.speak:
                     action["speech"] = None
-                self.sim.submit(aid, action)
+                try:
+                    self.sim.submit(aid, action)
+                except ValueError:
+                    # The hour, work site or recent facts changed while the
+                    # model's intent was held. Rules immediately take over.
+                    brain.action = None
+                    self.sim.pending.pop(aid, None)
                 brain.speak = False
 
     def schedule_brains(self):
@@ -169,9 +220,8 @@ class Session:
                     # spanned several steps. World-event priorities still win.
                     sim.submit(aid, {**action, "step": sim.step})
                     brain.action = {
-                        "place": action["place"],
-                        "activity": action["activity"],
-                        "speech": action.get("speech"),
+                        key: action.get(key) for key in
+                        ("place", "activity", "speech", "result", "mood", "promise", "thought")
                     }
                     brain.until = sim.step + brain.config.every_steps
                     brain.speak = True
@@ -190,6 +240,7 @@ class Session:
 
     def close(self):
         with self.condition:
+            self.persist()
             self.running = False
             self.brains.clear()
             self.condition.notify_all()
@@ -250,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
                 with self.session.condition:
                     result, status = self.read_api(path)
                 return self.send(result, status)
-            relative = "index.html" if path == "/" else path.lstrip("/")
+            relative = "docs.html" if path in ("/docs", "/docs/") else "index.html" if path == "/" else path.lstrip("/")
             target = (STATIC / relative).resolve()
             if not target.is_relative_to(STATIC.resolve()) or not target.is_file():
                 return self.send({"error": "Not found"}, 404)
@@ -271,6 +322,7 @@ class Handler(BaseHTTPRequestHandler):
                 "schema_version": 1,
                 "world": self.session.sim.world.config,
                 "snapshots": list(self.session.recording),
+                "session": self.session.checkpoint(),
             }, 200
         parts = path.strip("/").split("/")
         if (
@@ -332,8 +384,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send({"error": "Content-Type must be application/json"}, 415)
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if size < 1 or size > 8192:
-                raise ValueError("Request must contain 1–8192 bytes of JSON")
+            limit = 50 * 1024 * 1024 if urlparse(self.path).path == "/api/session/resume" else 8192
+            if size < 1 or size > limit:
+                raise ValueError(f"Request must contain 1–{limit} bytes of JSON")
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError("Expected a JSON object")
@@ -349,6 +402,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_command(self, path, data):
         session, sim = self.session, self.session.sim
+        if path == "/api/session/resume":
+            session.resume(data.get("session"))
+            return session.state()
         if path == "/api/control":
             action = data.get("action")
             if action == "pause":
@@ -436,6 +492,7 @@ class Handler(BaseHTTPRequestHandler):
             if action == "action":
                 sim.submit(aid, data)
                 agent.provider_until = sim.step + 8
+                session.persist()
                 return {"accepted": True, "for_step": sim.step + 1}
             if action == "leave":
                 agent.provider = None
@@ -446,13 +503,14 @@ class Handler(BaseHTTPRequestHandler):
         raise ValueError("Unknown endpoint")
 
 
-def serve(host="127.0.0.1", port=8000, count=3, seed=7, interval=2.0):
-    session = Session(count, seed, interval)
+def serve(host="127.0.0.1", port=8000, count=3, seed=7, interval=2.0, state_path=None):
+    session = Session(count, seed, interval, state_path)
     server = Server((host, port), session)
     session.thread.start()
     print(f"Lantern Bay is alive at http://{host}:{server.server_port}", flush=True)
     print(
-        "Press Ctrl+C to end the session. Export a recording from the viewer to keep it.",
+        "Press Ctrl+C to stop. The village resumes from disk on the next launch."
+        if state_path else "Press Ctrl+C to stop. Save this story in the viewer to resume it later.",
         flush=True,
     )
     try:

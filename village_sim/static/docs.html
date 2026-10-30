@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Lantern Bay · Agent API</title>
+<style>body{max-width:850px;margin:3rem auto;padding:0 1.5rem;background:#152325;color:#e9ead9;font:17px/1.7 system-ui}a{color:#f0c984}pre{background:#0b1719;padding:1rem;overflow:auto;border-radius:10px}code{font-size:.9em}h1,h2{color:#f0c984}table{border-collapse:collapse;width:100%}td,th{text-align:left;border-bottom:1px solid #445756;padding:.6rem}</style></head>
+<body><a href="/">← Return to the village</a><h1>Bring a brain to Lantern Bay</h1>
+<p>The village keeps its own clock, pantry and memories. An external harness can attach to a resident and choose from the same bounded decisions as the rules. Providers never invent activities or resources.</p>
+<h2>1. Attach</h2>
+<pre>curl -s http://127.0.0.1:8000/api/agents/mara/join \
+  -H 'Content-Type: application/json' -d '{"provider":"My local agent"}'</pre>
+<p>The response contains a bearer <code>token</code> and an <code>observation_url</code>. Keep this token in your harness process. It is excluded from saved stories.</p>
+<h2>2. Observe</h2>
+<pre>curl -s http://127.0.0.1:8000/api/agents/mara/observation \
+  -H 'Authorization: Bearer YOUR_TOKEN'</pre>
+<p>The observation includes the resident, pantry, recent memories, promises, goals, nearby villagers and <code>suggested_action</code>. Copy one entry from <code>allowed_actions</code> for <code>place</code> and <code>activity</code>. Optional slots must come from the corresponding <code>result_options</code>, <code>mood_options</code>, <code>promise_options</code> and <code>speech_options</code>. A brief <code>thought</code> (up to 200 characters) can explain the choice. Omit optional slots to let the rules decide.</p>
+<h2>3. Submit</h2>
+<pre>curl -s http://127.0.0.1:8000/api/agents/mara/action \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -d '{"step":0,"place":"fire","activity":"sharing stories","mood":"hopeful"}'</pre>
+<p>Replace the example's step, place and activity with the current observation. An accepted decision returns <code>{"accepted":true,"for_step":1}</code>. Only one pending decision exists per resident. Stale steps and choices outside the supplied options return HTTP 400; fetch a fresh observation and reconsider. World events and time changes take precedence. Rules continue while a model is thinking or fails.</p>
+<p>Attachments last eight simulation steps. Authenticated observations and accepted decisions renew the lease. Poll once per step; the clock pauses only through the village controls. To detach, POST an empty JSON object to <code>/api/agents/mara/leave</code> with the same bearer token.</p>
+<h2>Shared controls and saved stories</h2>
+<table><tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+<tr><td>GET</td><td><code>/api/state</code></td><td>Current village and provider status</td></tr>
+<tr><td>GET</td><td><code>/api/stream</code></td><td>Server-sent state updates</td></tr>
+<tr><td>GET</td><td><code>/api/recording</code></td><td>Replay frames plus resumable session</td></tr>
+<tr><td>POST</td><td><code>/api/session/resume</code></td><td><code>{"session": saved.session}</code>; restores and pauses</td></tr>
+<tr><td>POST</td><td><code>/api/control</code></td><td><code>{"action":"pause"}</code>, play, step or reset</td></tr>
+<tr><td>POST</td><td><code>/api/events</code></td><td><code>{"kind":"storm"}</code>, festival or clear</td></tr></table>
+<p>Local controls are shared among viewers. Browser writes require matching Host and Origin; CLI clients may omit Origin. Resume and reset revoke all provider connections. Keys never enter story files; reconnect after restarting. Live sessions automatically resume from <code>.village-sim/session.json</code>. Old recordings without a session checkpoint remain replayable.</p>
+</body></html>

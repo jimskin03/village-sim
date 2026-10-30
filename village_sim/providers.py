@@ -74,6 +74,9 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
     # Memory remains complete in the simulation. Only a bounded view is sent to
     # the model so a long village session does not create ever-larger prompts.
     context = {k: v for k, v in observation.items() if k != "agent"}
+    for key in ("suppers", "reflections"):
+        if key in context:
+            context[key] = context[key][-3:]
     context["agent"] = {
         k: v for k, v in agent.items() if k not in ("memory", "provider_until")
     }
@@ -81,11 +84,13 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
     instructions = (
         "You inhabit a villager in a small fishing village. Act according to your persona, "
         "memories, relationships, daily goals, daily plan, time and nearby people. "
-        "Work toward unfinished goals and make time for familiar villagers. Choose one believable "
-        "activity for the next few game hours. Respect storms, sleep and other villagers. "
-        "Return only a JSON object with place (an available place id), activity (1-100 "
-        "characters), and speech (optional, at most 200 characters, or null). Do not use "
-        "markdown. Do not invent place IDs. Use natural, brief dialogue."
+        "The rules already choose the activity and destination in suggested_action. "
+        "Do not invent or change activities, places, supplies or past events. Fill only these "
+        "optional slots: result (one exact ID from result_options), mood (one exact value from "
+        "mood_options), promise (one exact sentence from promise_options), speech (one exact "
+        "line from speech_options), thought (a brief thought grounded in the supplied facts, "
+        "at most 200 characters). Choose null when a slot has no suitable option. "
+        "Return only a JSON object with these slots. Do not use markdown."
     )
     body = {
         "model": config.model,
@@ -120,7 +125,7 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         action = json.loads(content)
         if not isinstance(action, dict):
             raise ValueError
-        return action
+        return validate_slots(action, observation)
     except HTTPError as error:
         status = error.code
         error.close()
@@ -135,3 +140,24 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         raise ProviderError(
             "The model did not return a valid decision. Try a model that follows JSON instructions."
         ) from None
+
+
+def validate_slots(action: dict, observation: dict) -> dict:
+    """Models may fill rule-owned slots; they cannot create a new activity."""
+    slots = ("result", "mood", "promise", "speech", "thought")
+    if set(action) - {"place", "activity", *slots}:
+        raise ValueError("Unknown decision slot")
+    suggested = observation["suggested_action"]
+    result = {key: suggested[key] for key in ("place", "activity")}
+    for key in ("place", "activity"):
+        if key in action and action[key] != result[key]:
+            raise ValueError("The model cannot change the rule-selected activity")
+    for key in slots:
+        value = action.get(key)
+        if value is not None:
+            if not isinstance(value, str) or len(value) > 200:
+                raise ValueError("Decision slots must be short text")
+            if key != "thought" and value not in observation.get(key + "_options", []):
+                raise ValueError("Decision must use an offered slot value")
+        result[key] = value
+    return result

@@ -35,25 +35,30 @@ scroll or swipe to explore the enlarged canvas, use **Overview** to see the whol
 village, and toggle labels or zoom with the map controls. The page stays in place
 while panels scroll independently.
 
-Each day, villagers set a goal tied to their craft and, when they have company,
-a goal to share a conversation. They pursue unfinished work during working hours
-and seek out familiar faces on their afternoon break. Conversations strengthen
-friendships, and completed goals become memories in the village journal. Storms,
-festivals and model decisions can change how the day unfolds.
+The village shares a pantry: fish, herbs, net and boat condition, and a hearth
+that lights after dark. Work produces specific successes or failures. Supper at
+dusk spends the supplies, remembers a shortfall, and shapes tomorrow’s goals.
+Storms damage the net and close the jetty; festivals spend supplies and welcome
+a visitor to the guest cottage. Relationships keep the latest shared promise or
+grudge. At midnight, a two-sentence reflection is pinned above the compact chore
+log. The painting is graded by hour and map markers show the supplies and repairs.
 
-In settings, **Save this story** downloads the session as JSON. **Open a recording** replays it
-with play/pause, single-step and a scrubber. The live world keeps running during
-replay. A recording is for viewing, not restoring a simulation.
+**Save this story** downloads replay frames and a resumable checkpoint. Open a
+story to watch it, then choose **Resume this story** to continue its simulation.
+Older recordings without a checkpoint remain replayable. Resuming replaces the
+live village, pauses it, and disconnects model providers; press Play to continue.
 
-Memory belongs to the world: changing an agent's provider or removing and returning
-a villager does not erase it. Restarting the server or choosing **Start again**
-starts a fresh session. Export first if you want to keep the story.
+Live sessions save atomically to `.village-sim/session.json` after each step and
+control change. Restarting the server resumes the clock, pantry, memories,
+promises, absent residents and random sequence. Choose `--state-file PATH` for
+a separate village or `--no-persist` to start without disk saves. **Start again**
+replaces the current saved village. Provider keys and tokens are never saved.
 
 ## Connect an LLM to a villager
 
 1. Select a villager on the map or their card.
 2. In **A closer look**, click **Connect LLM**.
-3. Choose OpenAI or a custom/local OpenAI-compatible provider.
+3. Choose OpenAI, the local Ollama preset, or a custom OpenAI-compatible provider.
 4. Enter the API base URL, your provider's model ID, and API key (optional for local servers).
 5. Click **Connect LLM**. The panel shows thinking, successful decision count, or a connection error.
 
@@ -61,9 +66,10 @@ For OpenAI, the base URL is `https://api.openai.com/v1`. For other providers,
 use their OpenAI-compatible base URL. The server appends `/chat/completions`.
 Each villager can use a different provider/model. No model ID is hard-coded.
 
-The model receives the villager's persona, a bounded memory view, relationships,
-nearby villagers and named places. It chooses an activity, destination and optional
-dialogue. That intent lasts for the selected number of steps. The village clock
+The model receives the villager's persona, a bounded memory view, shared facts,
+pantry and the rule-selected activity. It fills bounded result, mood, speech and
+promise slots; it cannot invent a new activity. A brief thought appears with the
+villager. Intent lasts for the selected number of steps while its context remains valid. The village clock
 keeps advancing while the model thinks; rules handle missing or failed decisions.
 Automatic calls are at least ten real seconds apart, with a thirty-second backoff
 on errors. **Think now** requests a fresh decision, including while paused.
@@ -71,7 +77,7 @@ on errors. **Think now** requests a fresh decision, including while paused.
 Keys stay in server memory and are excluded from recordings and browser storage.
 Reconnect after restarting/resetting the server. **Disconnect** keeps the
 villager's identity and memories. You can also connect an external harness using
-the [agent API](docs/agent-harness.md).
+the [agent API](docs/agent-harness.md), also published at `/docs` and linked in About.
 
 ## Run without a browser
 
@@ -82,7 +88,9 @@ python3 -m village_sim --headless --steps 96
 python3 -m village_sim --headless --steps 192 --agents 8 --output recordings/two-days.json
 ```
 
-Open the exported recording in the browser viewer. A seed makes rule-based runs
+Open the exported story in the browser viewer to replay or resume it. Headless runs
+start fresh by default; add `--state-file PATH` to save each step and resume that
+checkpoint on subsequent runs. A seed makes rule-based runs
 reproducible. Optional installation exposes the same CLI as `village-sim`:
 
 ```bash
@@ -120,7 +128,6 @@ weather and festival reactions, HTTP controls, streaming and recording. Model te
 use a local mock HTTP provider and cover actual request formatting, independent
 models, invalid replies, slow calls, disconnect races and secret redaction.
 
-This is a local first demo: rule-based dialogue uses a small collection of lines,
-art remains a night scene throughout the game day, and session history lives in
-RAM until exported. The standard-library development server binds to loopback by
+This is a local first demo: rule-based dialogue and outcomes use bounded,
+contextual choices, and the original painting is color-graded throughout the day. The standard-library development server binds to loopback by
 default; it is not a public hosting server.

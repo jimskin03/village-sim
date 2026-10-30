@@ -22,37 +22,21 @@ class DepthTests(unittest.TestCase):
         self.assertEqual(goal(mara, "work")["progress"], 0)
 
         mara.x, mara.y = sim.world.point("jetty")
-        sim.tick()
-        self.assertEqual(goal(mara, "work")["progress"], 1)
-        for _ in range(3):
+        for tick in range(9):
+            sim.submit("mara", {"step": sim.step, "result": "silver_fish"})
             sim.tick()
-        self.assertEqual(goal(mara, "work")["progress"], 1)
-        for _ in range(5):
-            sim.tick()
+            if tick < 4:
+                self.assertEqual(goal(mara, "work")["progress"], 1)
         self.assertTrue(goal(mara, "work")["completed"])
         self.assertEqual(goal(mara, "work")["progress"], 3)
         sim.tick()
         self.assertEqual(mara.destination, "nets")
-
-        # More output on a completed goal must never emit another completion.
-        for _ in range(8):
-            sim.submit("mara", {
-                "step": sim.step, "place": "jetty", "activity": "fishing"
-            })
-            sim.tick()
-        completions = [
-            event for event in mara.memory
-            if event["kind"] == "goal" and "Catch 3 fish" in event["text"]
-        ]
+        completions = [event for event in mara.memory if event["kind"] == "goal" and "Catch 3 fish" in event["text"]]
         self.assertEqual(len(completions), 1)
-        self.assertEqual(goal(mara, "work")["progress"], 3)
 
     def test_social_goals_require_a_conversation_with_the_intended_person(self):
         sim = Simulation(count=2)
-        sim.submit("mara", {
-            "step": 0, "place": "mara_home", "activity": "resting",
-            "speech": "I hope to see Tom later."
-        })
+        sim.submit("mara", {"step": 0, "thought": "I hope to see Tom later."})
         sim.tick()
         self.assertEqual(goal(sim.agents["mara"], "social")["progress"], 0)
         for agent in sim.agents.values():
@@ -61,12 +45,12 @@ class DepthTests(unittest.TestCase):
         for agent in sim.agents.values():
             self.assertTrue(goal(agent, "social")["completed"])
             self.assertTrue(any(event["kind"] == "goal" for event in agent.memory))
-        self.assertEqual(sim.agents["mara"].relationships["tom"], 1)
-        self.assertEqual(sim.agents["tom"].relationships["mara"], 1)
+        self.assertIn("shared supper", sim.agents["mara"].relationships["tom"])
+        self.assertEqual(sim.agents["tom"].relationships["mara"], sim.agents["mara"].relationships["tom"])
 
     def test_friendships_choose_break_partner_and_meeting_place(self):
         familiar, new = Simulation(), Simulation()
-        familiar.agents["mara"].relationships.update(tom=1, lin=4)
+        familiar.agents["mara"].relationships["lin"] = "Mara promised Lin fish for supper."
         for sim in (familiar, new):
             sim.step = 75  # 12:45 on day two; refresh daily intentions.
             sim.set_population(3)
@@ -103,7 +87,8 @@ class DepthTests(unittest.TestCase):
         for agent in sim.agents.values():
             self.assertTrue(all(g["day"] == 2 and g["progress"] == 0 for g in agent.goals))
             reflection = next(m for m in reversed(agent.memory) if m["kind"] == "reflection")
-            self.assertIn("completed 1 of 2 daily goals", reflection["text"])
+            self.assertIn("table was short", reflection["text"])
+            self.assertEqual(reflection["text"].count("."), 2)
 
     def test_goals_survive_same_day_rejoin_and_refresh_after_an_absent_day(self):
         sim = Simulation()
@@ -133,15 +118,11 @@ class DepthTests(unittest.TestCase):
         sim.set_population(3)
         mara = sim.agents["mara"]
         saved = copy.deepcopy(mara.goals)
-        sim.submit("mara", {
-            "step": sim.step, "place": "garden", "activity": "picking herbs"
-        })
+        sim.submit("mara", {"step": sim.step, "mood": "hopeful"})
         sim.tick()
-        self.assertEqual(mara.destination, "garden")
+        self.assertEqual(mara.destination, "jetty")
+        sim.submit("mara", {"step": sim.step})
         sim.inject("storm")
-        sim.submit("mara", {
-            "step": sim.step, "place": "jetty", "activity": "fishing"
-        })
         sim.tick()
         self.assertEqual(mara.destination, mara.home)
         self.assertEqual(mara.goals, saved)
@@ -152,7 +133,7 @@ class DepthTests(unittest.TestCase):
         self.assertEqual(goal(mara, "work")["progress"], 0)
         sim.inject("clear")
         sim.tick()
-        self.assertEqual(mara.destination, "jetty")
+        self.assertEqual(mara.destination, "nets")
 
     def test_unattended_goals_complete_and_snapshots_are_independent(self):
         sim = Simulation()

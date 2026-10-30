@@ -6,3 +6,4 @@ build/
 dist/
 .playwright/
 recordings/
+.village-sim/

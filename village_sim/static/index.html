@@ -146,7 +146,10 @@
               alt="A lantern-lit fishing village with thatched cottages, a garden, boats and a wooden jetty beside blue water."
               draggable="false"
             />
+            <div id="daylight-wash" aria-hidden="true"></div>
+            <div id="hearth-light" aria-hidden="true"></div>
             <div id="place-labels"></div>
+            <div id="state-markers" aria-label="Village supplies"></div>
             <canvas id="atmosphere" aria-hidden="true"></canvas>
             <div id="villagers"></div>
           </div>
@@ -229,7 +232,7 @@
                 <p id="brain-status">Rule-based routines</p>
               </div>
               <button id="llm-open" class="secondary-button">
-                Connect LLM
+                Connect a brain
               </button>
             </div>
             <div class="tabs" role="tablist" aria-label="Villager details">
@@ -270,7 +273,9 @@
           aria-label="Village journal entries"
         >
           <section class="journal">
-            <p class="journal-subtitle">Small moments, as they happen.</p>
+            <p class="journal-subtitle">What the village carries into tomorrow.</p>
+            <div id="reflections" aria-label="Pinned midnight reflections"></div>
+            <div id="supper-ledger" aria-label="Supper ledger"></div>
             <div
               id="journal"
               class="journal-entries"
@@ -331,6 +336,7 @@
           value="0"
           aria-label="Recording position"
         /><span id="replay-count"></span
+        ><button id="resume-story" disabled title="Older recordings can only be replayed">Resume this story</button
         ><button id="return-live">Return to live village</button>
       </div>
 
@@ -382,15 +388,16 @@
         </select></label
       >
       <p class="setting-note">
-        Villagers keep their memories when they leave and return in the same
-        session.
+        The village saves itself after every step. Saved stories can be replayed
+        or resumed as a living village.
       </p>
+      <p id="persistence-status" class="setting-note" role="status"></p>
       <div class="session-tools" aria-label="Recordings and information">
         <button id="export" class="secondary-button">
           <svg><use href="#i-download" /></svg>Save this story
         </button>
         <label class="load-recording secondary-button"
-          >Open a recording<input
+          >Open a saved story<input
             type="file"
             id="import"
             accept="application/json,.json"
@@ -417,26 +424,17 @@
         </div>
       </form>
       <p>
-        Give this villager a model of their own. Their personality and memories
-        stay with them.
+        Choose a brain for this villager. It can shape a work result, a mood,
+        or a promise within the village’s rules.
       </p>
       <form id="llm-form" class="llm-form">
         <label
           >Provider<select id="llm-provider">
             <option value="openai">OpenAI</option>
-            <option value="custom">Custom / local (OpenAI-compatible)</option>
+            <option value="ollama">Ollama · on this computer</option>
+            <option value="custom">Custom gateway</option>
           </select></label
         >
-        <label
-          >API base URL<input
-            id="llm-endpoint"
-            type="url"
-            required
-            maxlength="500"
-            value="https://api.openai.com/v1"
-            placeholder="http://localhost:11434/v1"
-            autocomplete="off"
-        /></label>
         <label
           >Model ID<input
             id="llm-model"
@@ -458,6 +456,18 @@
           >Optional for local servers. Keys are kept in server memory for this
           session.</small
         >
+        <details id="llm-advanced" class="llm-advanced">
+          <summary>Connection details</summary>
+        <label
+          >API base URL<input
+            id="llm-endpoint"
+            type="url"
+            required
+            maxlength="500"
+            value="https://api.openai.com/v1"
+            placeholder="http://localhost:11434/v1"
+            autocomplete="off"
+        /></label>
         <label
           >Decide again after<select id="llm-frequency">
             <option value="4">1 game hour (4 steps)</option>
@@ -466,6 +476,7 @@
             <option value="32">8 game hours (32 steps)</option>
           </select></label
         >
+        </details>
         <p class="llm-help">
           Connecting starts a model request. Automatic requests are at least 10
           seconds apart. The villager follows rules while waiting.
@@ -484,7 +495,7 @@
           ><button type="button" id="llm-think" class="secondary-button" hidden>
             Think now</button
           ><button type="submit" id="llm-connect" class="primary-button">
-            Connect LLM
+            Connect a brain
           </button>
         </div>
       </form>
@@ -509,15 +520,18 @@
       </p>
       <p>
         The village runs on rules, with no API key. Select a villager and choose
-        Connect LLM to give them a model through your provider. External agents
+        Connect a brain to give them a model through your provider. External agents
         can also connect through the local API. The village keeps moving while a
         model thinks.
       </p>
       <div class="about-note">
-        Memories last for this server session. Save a recording to revisit a
-        story after the session ends. Replay is a viewer; it doesn’t restore a
-        running simulation.
+        The pantry, memories and promises are saved after each step. Save this
+        story to keep a copy, then open it and choose Resume this story to
+        continue from its final moment.
       </div>
+      <p><a href="/docs" target="_blank" rel="noopener">External agent API guide ↗</a><br>
+        Attach a harness, read a villager’s observation, and submit one of the
+        available choices. The guide includes endpoints and a working example.</p>
       <p class="about-signoff">Made for watching the little things.</p>
     </dialog>
     <div id="toast" class="toast" role="status" hidden></div>
