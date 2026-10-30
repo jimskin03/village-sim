@@ -196,8 +196,9 @@ the village sim's simple grid.
    before any commercial use.
 2. **Platform.** Browser (canvas or Phaser-style) or a native viewer? Does it need to
    run on a phone?
-3. **Reuse or standalone.** Should this live inside thehabitat (new folder) or in its own
-   repository so it does not entangle with the reverie stack and its Docker setup?
+3. **Reuse or standalone (resolved).** This project lives in its own repository so it does not
+   entangle with thehabitat's reverie stack. Reverie is studied for ideas. If any of its code is
+   copied, keep its licence notice.
 4. **Model provider.** Which LLM provider and model, what per-step budget, and is a
    fully offline rule-based mode a hard requirement?
 5. **Agent count and step size.** How many agents, and how long is one step in game time?
