@@ -212,8 +212,9 @@ the village sim's simple grid.
 8. **Persistence and replay.** Is saving runs and replaying them in the viewer a v1
    feature?
 9. **Language and stack.** Python core as in reverie, or another language?
-10. **Success criteria.** What does a good first demo look like (for example five agents
-    running a full game day without human input)?
+10. **Success criteria (resolved).** A good first demo is three agents running a full game day
+    without human input.
+
 
 ### Design notes
 
