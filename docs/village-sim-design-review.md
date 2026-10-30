@@ -1,6 +1,6 @@
 # Design review: a simpler 2D agent simulation ("Village Sim")
 
-Status: **proposal for discussion. No code has been written.**
+Status: **original design proposal, retained for reference.** The first demo is now implemented; see [the technical specification](technical-spec.md) and [README](../README.md) for current behavior.
 
 This document proposes a new, smaller agent simulation that keeps the core idea of
 thehabitat's `reverie` simulation (agents that live, remember and act on their own in a 2D
@@ -253,6 +253,6 @@ planning phase is slow and expensive, so planning must not block the viewer.
 
 ## Suggested next step
 
-Questions 1 to 4 are now decided. The remaining work is to decide questions 5 to 10, then write a
-one-page technical spec for the world file and the snapshot format. Only after that start
-implementation.
+The first implementation now resolves the remaining choices: a Python core, a browser viewer,
+observer controls with storm/festival events, and exportable recording replay. The world and
+snapshot contracts are documented in [technical-spec.md](technical-spec.md).

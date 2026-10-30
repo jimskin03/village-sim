@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "village-sim"
+version = "0.1.0"
+description = "A small, autonomous waterside village with a live browser viewer"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+village-sim = "village_sim.__main__:main"
+
+[tool.setuptools.package-data]
+village_sim = ["data/*.json", "static/*"]

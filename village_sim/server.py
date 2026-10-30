@@ -1,0 +1,464 @@
+"""One local process serving static UI, SSE snapshots and optional agent actions."""
+
+from __future__ import annotations
+
+import hmac
+import json
+import mimetypes
+from pathlib import Path
+import secrets
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Condition, Thread
+import time
+from dataclasses import dataclass
+from urllib.parse import urlparse
+
+from . import providers
+from .simulation import Simulation
+
+STATIC = Path(__file__).parent / "static"
+
+
+@dataclass
+class Brain:
+    config: providers.ProviderConfig
+    status: str = "waiting"
+    error: str | None = None
+    requests: int = 0
+    decisions: int = 0
+    next_step: int = 0
+    next_call: float = 0
+    action: dict | None = None
+    until: int = 0
+    speak: bool = False
+
+    def public(self):
+        return {
+            "base_url": self.config.base_url,
+            "model": self.config.model,
+            "every_steps": self.config.every_steps,
+            "has_key": bool(self.config.api_key),
+            "status": self.status,
+            "error": self.error,
+            "requests": self.requests,
+            "decisions": self.decisions,
+        }
+
+
+class Session:
+    def __init__(self, count=3, seed=7, interval=2.0):
+        self.condition = Condition()
+        self.sim = Simulation(count, seed)
+        self.interval = interval
+        self.paused = False
+        self.running = True
+        self.revision = 0
+        self.tokens: dict[str, str] = {}
+        self.brains: dict[str, Brain] = {}
+        self.workers: set[str] = set()
+        self.recording = [self.sim.snapshot()]
+        self.thread = Thread(target=self._run, daemon=True)
+
+    def state(self):
+        return {
+            **self.sim.snapshot(),
+            "paused": self.paused,
+            "interval": self.interval,
+            "revision": self.revision,
+            "brains": {aid: brain.public() for aid, brain in self.brains.items()},
+        }
+
+    def publish(self, record=True):
+        self.revision += 1
+        if record:
+            self.recording.append(self.sim.snapshot())
+        self.condition.notify_all()
+
+    def _run(self):
+        next_tick = time.monotonic() + self.interval
+        with self.condition:
+            while self.running:
+                if self.paused:
+                    self.condition.wait()
+                    next_tick = time.monotonic() + self.interval
+                else:
+                    remaining = next_tick - time.monotonic()
+                    if remaining > 0:
+                        self.condition.wait(remaining)
+                    else:
+                        self.prepare_brains()
+                        self.sim.tick()
+                        self.publish()
+                        self.schedule_brains()
+                        next_tick = time.monotonic() + self.interval
+
+    def connect_brain(self, aid, data):
+        previous = self.brains.get(aid)
+        agent = self.sim.agents[aid]
+        if not previous and agent.provider and self.sim.step < agent.provider_until:
+            raise ValueError(
+                "An external harness is attached. Disconnect it before connecting an LLM here."
+            )
+        config = providers.ProviderConfig.parse(
+            data, previous.config if previous else None
+        )
+        self.brains[aid] = Brain(config)
+        self.tokens.pop(aid, None)
+        self.sim.pending.pop(aid, None)
+        agent.provider = config.model[:60]
+        agent.provider_until = self.sim.step + 9
+        self.schedule_brains()
+        self.publish(record=False)
+
+    def disconnect_brain(self, aid):
+        if self.brains.pop(aid, None):
+            self.sim.agents[aid].provider = None
+            self.sim.pending.pop(aid, None)
+
+    def prepare_brains(self):
+        for aid, brain in self.brains.items():
+            agent = self.sim.agents[aid]
+            agent.provider = brain.config.model[:60]
+            agent.provider_until = self.sim.step + 9
+            if brain.action and self.sim.step < brain.until:
+                action = {**brain.action, "step": self.sim.step}
+                if not brain.speak:
+                    action["speech"] = None
+                self.sim.submit(aid, action)
+                brain.speak = False
+
+    def schedule_brains(self):
+        if not self.running:
+            return
+        for aid, brain in self.brains.items():
+            if (
+                aid in self.workers
+                or self.sim.step < brain.next_step
+                or time.monotonic() < brain.next_call
+            ):
+                continue
+            observation = self.sim.observe(aid)
+            brain.status = "thinking"
+            brain.requests += 1
+            self.workers.add(aid)
+            Thread(
+                target=self._plan, args=(aid, brain, self.sim, observation), daemon=True
+            ).start()
+
+    def _plan(self, aid, brain, sim, observation):
+        action, error = None, None
+        try:
+            action = providers.plan(brain.config, observation)
+        except providers.ProviderError as exc:
+            error = str(exc)
+        except Exception:
+            # Never propagate a provider's response or a key into the UI/logs.
+            error = "The provider could not produce a decision. Rules are keeping the villager moving."
+        with self.condition:
+            self.workers.discard(aid)
+            if (
+                not self.running
+                or self.sim is not sim
+                or self.brains.get(aid) is not brain
+            ):
+                self.schedule_brains()
+                return
+            if action is not None and not error:
+                try:
+                    # Validate at the current clock; HTTP planning may have
+                    # spanned several steps. World-event priorities still win.
+                    sim.submit(aid, {**action, "step": sim.step})
+                    brain.action = {
+                        "place": action["place"],
+                        "activity": action["activity"],
+                        "speech": action.get("speech"),
+                    }
+                    brain.until = sim.step + brain.config.every_steps
+                    brain.speak = True
+                    brain.decisions += 1
+                except (ValueError, TypeError, KeyError):
+                    error = "The model chose an invalid place or activity. Rules are keeping the villager moving."
+            if error:
+                sim.pending.pop(aid, None)
+                brain.action = None
+            brain.error = error
+            brain.status = "error" if error else "ready"
+            brain.next_step = sim.step + brain.config.every_steps
+            # Bound automatic spend and back off failed providers in real time.
+            brain.next_call = time.monotonic() + (30 if error else 10)
+            self.publish(record=False)
+
+    def close(self):
+        with self.condition:
+            self.running = False
+            self.brains.clear()
+            self.condition.notify_all()
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address, session):
+        self.session = session
+        super().__init__(address, Handler)
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "VillageSim/0.1"
+
+    def log_message(self, fmt, *args):
+        # Keep the console useful; a stream disconnect is normal.
+        if len(args) > 1 and str(args[1]).startswith(("4", "5")):
+            super().log_message(fmt, *args)
+
+    def send(self, data, status=200, content_type="application/json; charset=utf-8"):
+        body = (
+            json.dumps(data, ensure_ascii=False).encode()
+            if content_type.startswith("application/json")
+            else data
+        )
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    @property
+    def session(self):
+        return self.server.session
+
+    def authorized(self, aid):
+        token = self.session.tokens.get(aid)
+        header = self.headers.get("Authorization", "")
+        agent = self.session.sim.agents.get(aid)
+        return bool(
+            token
+            and agent
+            and agent.provider
+            and self.session.sim.step < agent.provider_until
+            and hmac.compare_digest(header, "Bearer " + token)
+        )
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        try:
+            if path == "/api/stream":
+                return self.stream()
+            if path.startswith("/api/"):
+                with self.session.condition:
+                    result, status = self.read_api(path)
+                return self.send(result, status)
+            relative = "index.html" if path == "/" else path.lstrip("/")
+            target = (STATIC / relative).resolve()
+            if not target.is_relative_to(STATIC.resolve()) or not target.is_file():
+                return self.send({"error": "Not found"}, 404)
+            kind = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            self.send(target.read_bytes(), content_type=kind)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def read_api(self, path):
+        if path == "/api/state":
+            return self.session.state(), 200
+        if path == "/api/world":
+            return self.session.sim.world.config, 200
+        if path == "/api/recording":
+            # Recorded frames are immutable; copy the index under the lock,
+            # then serialize and send without holding up the village clock.
+            return {
+                "schema_version": 1,
+                "world": self.session.sim.world.config,
+                "snapshots": list(self.session.recording),
+            }, 200
+        parts = path.strip("/").split("/")
+        if (
+            len(parts) == 4
+            and parts[:2] == ["api", "agents"]
+            and parts[3] == "observation"
+        ):
+            aid = parts[2]
+            if aid not in self.session.sim.agents:
+                return {"error": "Unknown villager"}, 404
+            if not self.authorized(aid):
+                return {"error": "A valid agent bearer token is required"}, 401
+            self.session.sim.agents[aid].provider_until = self.session.sim.step + 8
+            return self.session.sim.observe(aid), 200
+        return {"error": "Unknown endpoint"}, 404
+
+    def stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        revision = -1
+        try:
+            while self.session.running:
+                with self.session.condition:
+                    if revision == self.session.revision:
+                        self.session.condition.wait(timeout=10)
+                    if revision == self.session.revision:
+                        payload = b": heartbeat\n\n"
+                    else:
+                        revision = self.session.revision
+                        payload = (
+                            "data: "
+                            + json.dumps(self.session.state(), ensure_ascii=False)
+                            + "\n\n"
+                        ).encode()
+                self.wfile.write(payload)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            pass
+
+    def do_POST(self):
+        # The local control API accepts only same-origin browser requests. CLI
+        # harnesses do not send Origin. This also protects against DNS rebinding.
+        host = self.headers.get("Host", "")
+        expected_hosts = {
+            f"localhost:{self.server.server_port}",
+            f"127.0.0.1:{self.server.server_port}",
+            f"{self.server.server_address[0]}:{self.server.server_port}",
+            f"{self.connection.getsockname()[0]}:{self.server.server_port}",
+        }
+        origin = self.headers.get("Origin")
+        if host not in expected_hosts or (origin and origin != "http://" + host):
+            return self.send(
+                {"error": "Only same-origin local controls are accepted"}, 403
+            )
+        if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+            return self.send({"error": "Content-Type must be application/json"}, 415)
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if size < 1 or size > 8192:
+                raise ValueError("Request must contain 1–8192 bytes of JSON")
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict):
+                raise ValueError("Expected a JSON object")
+            with self.session.condition:
+                result = self.handle_command(urlparse(self.path).path, data)
+            self.send(result)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.send({"error": str(exc)}, 400)
+        except PermissionError as exc:
+            self.send({"error": str(exc)}, 401)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def handle_command(self, path, data):
+        session, sim = self.session, self.session.sim
+        if path == "/api/control":
+            action = data.get("action")
+            if action == "pause":
+                session.paused = True
+            elif action == "play":
+                session.paused = False
+            elif action == "step":
+                session.paused = True
+                session.prepare_brains()
+                sim.tick()
+                session.schedule_brains()
+            elif action == "speed":
+                interval = data.get("interval")
+                if type(interval) not in (float, int) or interval not in (0.5, 1, 2, 4):
+                    raise ValueError("Interval must be 0.5, 1, 2 or 4 seconds")
+                session.interval = interval
+            elif action == "population":
+                sim.set_population(data.get("count"))
+                session.tokens = {
+                    aid: t for aid, t in session.tokens.items() if aid in sim.agents
+                }
+                session.brains = {
+                    aid: brain
+                    for aid, brain in session.brains.items()
+                    if aid in sim.agents
+                }
+            elif action == "reset":
+                session.brains.clear()
+                session.sim = Simulation(len(sim.agents), sim.seed)
+                session.tokens.clear()
+                session.recording = [session.sim.snapshot()]
+            else:
+                raise ValueError("Unknown control action")
+            session.publish(record=action in ("step", "population"))
+            return session.state()
+        if path == "/api/events":
+            sim.inject(data.get("kind"))
+            session.publish()
+            return session.state()
+        parts = path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "agents"]:
+            aid, action = parts[2:]
+            if aid not in sim.agents:
+                raise ValueError("Unknown villager")
+            agent = sim.agents[aid]
+            if action == "brain":
+                if data.get("action") == "disconnect":
+                    session.disconnect_brain(aid)
+                    session.publish(record=False)
+                elif data.get("action") == "think":
+                    if aid not in session.brains:
+                        raise ValueError("Connect an LLM first")
+                    brain = session.brains[aid]
+                    brain.next_step = 0
+                    brain.next_call = 0
+                    session.schedule_brains()
+                    session.publish(record=False)
+                elif data.get("action") == "connect":
+                    session.connect_brain(aid, data)
+                else:
+                    raise ValueError("Choose connect, disconnect or think")
+                return session.state()
+            if action == "join":
+                name = data.get("provider", "External harness")
+                if not isinstance(name, str) or not 1 <= len(name.strip()) <= 60:
+                    raise ValueError("Provider name must contain 1–60 characters")
+                if (
+                    agent.provider
+                    and sim.step < agent.provider_until
+                    and not self.authorized(aid)
+                ):
+                    raise PermissionError("Villager already has an attached provider")
+                token = secrets.token_urlsafe(32)
+                session.tokens[aid] = token
+                agent.provider = name.strip()
+                agent.provider_until = sim.step + 8
+                session.publish(record=False)
+                return {
+                    "token": token,
+                    "agent_id": aid,
+                    "observation_url": f"/api/agents/{aid}/observation",
+                }
+            if not self.authorized(aid):
+                raise PermissionError("A valid agent bearer token is required")
+            if action == "action":
+                sim.submit(aid, data)
+                agent.provider_until = sim.step + 8
+                return {"accepted": True, "for_step": sim.step + 1}
+            if action == "leave":
+                agent.provider = None
+                sim.pending.pop(aid, None)
+                session.tokens.pop(aid, None)
+                session.publish(record=False)
+                return {"detached": True}
+        raise ValueError("Unknown endpoint")
+
+
+def serve(host="127.0.0.1", port=8000, count=3, seed=7, interval=2.0):
+    session = Session(count, seed, interval)
+    server = Server((host, port), session)
+    session.thread.start()
+    print(f"Lantern Bay is alive at http://{host}:{server.server_port}", flush=True)
+    print(
+        "Press Ctrl+C to end the session. Export a recording from the viewer to keep it.",
+        flush=True,
+    )
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nThe village lanterns go out. Goodbye.")
+    finally:
+        session.close()
+        server.server_close()

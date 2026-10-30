@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#182f31" />
+    <meta
+      name="description"
+      content="A small world with a life of its own. Watch the villagers of Lantern Bay work, wander, remember, and become friends."
+    />
+    <title>Lantern Bay · Village Sim</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <svg class="icon-defs" aria-hidden="true">
+      <defs>
+        <symbol id="i-lantern" viewBox="0 0 24 24">
+          <path
+            d="M9 5a3 3 0 0 1 6 0M7 8h10l2 11H5L7 8Zm-2 11h14M8 5h8M12 9v8"
+          />
+        </symbol>
+        <symbol id="i-play" viewBox="0 0 24 24">
+          <path d="m9 5 11 7-11 7V5Z" />
+        </symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24">
+          <path d="M8 5v14M16 5v14" />
+        </symbol>
+        <symbol id="i-step" viewBox="0 0 24 24">
+          <path d="m5 5 10 7-10 7V5ZM19 5v14" />
+        </symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24">
+          <path d="M4 7h16M4 17h16M9 4v6M15 14v6" />
+        </symbol>
+        <symbol id="i-arrow" viewBox="0 0 24 24">
+          <path d="m9 5 7 7-7 7" />
+        </symbol>
+        <symbol id="i-moon" viewBox="0 0 24 24">
+          <path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z" />
+        </symbol>
+        <symbol id="i-download" viewBox="0 0 24 24">
+          <path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5" />
+        </symbol>
+        <symbol id="i-close" viewBox="0 0 24 24">
+          <path d="m6 6 12 12M18 6 6 18" />
+        </symbol>
+      </defs>
+    </svg>
+    <header class="masthead">
+      <a class="brand" href="/" aria-label="Lantern Bay home"
+        ><span class="brand-mark"
+          ><svg><use href="#i-lantern" /></svg></span
+        ><span>Lantern Bay<small>A VILLAGE SIMULATION</small></span></a
+      >
+      <nav aria-label="Main">
+        <span class="nav-active">The village</span
+        ><button id="about-open" class="nav-button">
+          A little about this world <span>↗</span>
+        </button>
+      </nav>
+      <div class="connection">
+        <span class="status-dot"></span
+        ><span id="connection-label">Connecting</span>
+      </div>
+    </header>
+    <main>
+      <section class="page-heading" aria-label="Village overview">
+        <div>
+          <p class="eyebrow">A SMALL WORLD. A LIFE OF ITS OWN.</p>
+          <h1>Life by the water<span>.</span></h1>
+          <p class="intro">
+            A few familiar faces, their own little stories. Stay a while.
+          </p>
+        </div>
+        <div class="clock">
+          <span class="clock-icon"
+            ><svg><use href="#i-moon" /></svg
+          ></span>
+          <div>
+            <span class="eyebrow" id="day">DAY 1 · EVENING</span>
+            <div>
+              <time id="clock-time">18:00</time
+              ><span id="weather-text">Clear skies</span>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div class="workspace">
+        <section class="village-column" aria-label="Live village">
+          <div class="scene-toolbar">
+            <div class="live-label">
+              <span class="status-dot"></span
+              ><span id="scene-mode">THE VILLAGE, LIVE</span>
+            </div>
+            <div class="playback">
+              <button
+                id="play"
+                class="icon-button"
+                title="Pause simulation"
+                aria-label="Pause simulation"
+              >
+                <svg><use href="#i-pause" /></svg></button
+              ><button
+                id="step"
+                class="icon-button"
+                title="Advance 15 minutes"
+                aria-label="Advance one step"
+              >
+                <svg><use href="#i-step" /></svg></button
+              ><span class="divider"></span
+              ><label class="speed-label"
+                ><span class="sr-only">Simulation speed</span
+                ><select id="speed">
+                  <option value="4">½× speed</option>
+                  <option value="2" selected>1× speed</option>
+                  <option value="1">2× speed</option>
+                  <option value="0.5">4× speed</option>
+                </select></label
+              ><button
+                id="settings-open"
+                class="icon-button"
+                title="Village settings"
+                aria-label="Village settings"
+              >
+                <svg><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </div>
+          <div class="scene" id="scene">
+            <div id="scene-inner" class="scene-inner">
+              <img
+                src="/village-night-background.jpg"
+                width="1280"
+                height="720"
+                alt="A lantern-lit fishing village with thatched cottages, a garden, boats and a wooden jetty beside blue water."
+                draggable="false"
+              />
+              <div id="place-labels"></div>
+              <canvas id="atmosphere" aria-hidden="true"></canvas>
+              <div id="villagers"></div>
+            </div>
+            <div class="scene-caption">
+              <span class="scene-moon">☾</span
+              ><span id="scene-caption"
+                >Lanterns on. The world carries on.</span
+              >
+            </div>
+            <div class="scene-tools">
+              <button
+                id="labels"
+                aria-label="Show place labels"
+                aria-pressed="false"
+                title="Toggle place labels"
+              >
+                ⌖</button
+              ><button
+                id="zoom"
+                aria-label="Zoom into the village"
+                aria-pressed="false"
+                title="Toggle zoom"
+              >
+                ＋
+              </button>
+            </div>
+          </div>
+          <div class="scene-footer">
+            <span
+              ><i class="tiny-dot"></i>
+              <span id="population-caption"
+                >3 villagers, following their own rhythm</span
+              ></span
+            ><span
+              >15 game minutes / step <span class="footer-separator">·</span>
+              <span id="step-caption">Step 0</span></span
+            >
+          </div>
+          <section class="residents">
+            <div class="section-title">
+              <h2>Your villagers <span id="resident-count">03</span></h2>
+              <span>Every face has a story</span>
+            </div>
+            <div
+              id="resident-cards"
+              class="resident-cards"
+              aria-label="Select a villager"
+            ></div>
+          </section>
+          <section class="world-events">
+            <div class="event-intro">
+              <span class="event-star">✧</span>
+              <div>
+                <h3>A little change in the air</h3>
+                <p>Give the village something to respond to.</p>
+              </div>
+            </div>
+            <div class="event-buttons">
+              <button data-event="storm"><span>☂</span> A passing storm</button
+              ><button data-event="festival">
+                <span>✧</span> Lantern festival</button
+              ><button
+                data-event="clear"
+                title="End the current storm or festival"
+              >
+                <span>≈</span> Quiet evening
+              </button>
+            </div>
+          </section>
+        </section>
+        <aside class="sidebar">
+          <section class="inspector">
+            <div class="panel-kicker">A CLOSER LOOK <span>↙</span></div>
+            <div id="agent-profile"></div>
+            <div class="brain-panel">
+              <div>
+                <span class="detail-label">VILLAGER BRAIN</span>
+                <p id="brain-status">Rule-based routines</p>
+              </div>
+              <button id="llm-open" class="secondary-button">
+                Connect LLM
+              </button>
+            </div>
+            <div class="tabs" role="tablist" aria-label="Villager details">
+              <button role="tab" aria-selected="true" data-tab="story">
+                Story</button
+              ><button role="tab" aria-selected="false" data-tab="plan">
+                Daily plan</button
+              ><button role="tab" aria-selected="false" data-tab="memory">
+                Memories
+              </button>
+            </div>
+            <div id="agent-details" role="tabpanel" class="agent-details"></div>
+          </section>
+          <section class="journal">
+            <div class="journal-heading">
+              <h2>Village journal</h2>
+              <span class="journal-live">● LIVE</span>
+            </div>
+            <p class="journal-subtitle">Small moments, as they happen.</p>
+            <div
+              id="journal"
+              class="journal-entries"
+              aria-label="Recent village events"
+              tabindex="0"
+            ></div>
+          </section>
+        </aside>
+      </div>
+      <div id="replay-bar" class="replay-bar" hidden>
+        <strong>Recorded village</strong
+        ><input
+          type="range"
+          id="replay-position"
+          min="0"
+          max="1"
+          value="0"
+          aria-label="Recording position"
+        /><span id="replay-count"></span
+        ><button id="return-live">Return to live village</button>
+      </div>
+      <footer class="page-footer">
+        <span
+          ><svg><use href="#i-lantern" /></svg> No rush. Just a village finding
+          its way.</span
+        >
+        <div>
+          <button id="export">
+            <svg><use href="#i-download" /></svg> Save this story</button
+          ><label class="load-recording"
+            >Open a recording<input
+              type="file"
+              id="import"
+              accept="application/json,.json"
+          /></label>
+        </div>
+      </footer>
+    </main>
+    <dialog id="settings">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <h2>Village settings</h2>
+          <button class="icon-button" aria-label="Close settings">
+            <svg><use href="#i-close" /></svg>
+          </button>
+        </div>
+      </form>
+      <p>A few small adjustments to your little world.</p>
+      <label class="setting-row"
+        >Villagers
+        <select id="population">
+          <option>1</option>
+          <option>2</option>
+          <option selected>3</option>
+          <option>4</option>
+          <option>5</option>
+          <option>6</option>
+          <option>7</option>
+          <option>8</option>
+        </select></label
+      >
+      <p class="setting-note">
+        Villagers keep their memories when they leave and return in the same
+        session.
+      </p>
+      <div class="reset-row">
+        <div>
+          <strong>A fresh beginning</strong
+          ><small>Restarts the clock and clears this session.</small>
+        </div>
+        <button id="reset" class="secondary-button">Start again</button>
+      </div>
+    </dialog>
+    <dialog id="llm-settings">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <h2 id="llm-title">Connect a brain</h2>
+          <button class="icon-button" aria-label="Close LLM settings">
+            <svg><use href="#i-close" /></svg>
+          </button>
+        </div>
+      </form>
+      <p>
+        Give this villager a model of their own. Their personality and memories
+        stay with them.
+      </p>
+      <form id="llm-form" class="llm-form">
+        <label
+          >Provider<select id="llm-provider">
+            <option value="openai">OpenAI</option>
+            <option value="custom">Custom / local (OpenAI-compatible)</option>
+          </select></label
+        >
+        <label
+          >API base URL<input
+            id="llm-endpoint"
+            type="url"
+            required
+            maxlength="500"
+            value="https://api.openai.com/v1"
+            placeholder="http://localhost:11434/v1"
+            autocomplete="off"
+        /></label>
+        <label
+          >Model ID<input
+            id="llm-model"
+            required
+            maxlength="150"
+            placeholder="Enter the model ID from your provider"
+            autocomplete="off"
+        /></label>
+        <label
+          >API key<input
+            id="llm-key"
+            type="password"
+            maxlength="2048"
+            placeholder="Your provider’s API key"
+            autocomplete="off"
+            spellcheck="false"
+        /></label>
+        <small id="llm-key-note"
+          >Optional for local servers. Keys are kept in server memory for this
+          session.</small
+        >
+        <label
+          >Decide again after<select id="llm-frequency">
+            <option value="4">1 game hour (4 steps)</option>
+            <option value="8" selected>2 game hours (8 steps)</option>
+            <option value="16">4 game hours (16 steps)</option>
+            <option value="32">8 game hours (32 steps)</option>
+          </select></label
+        >
+        <p class="llm-help">
+          Connecting starts a model request. Automatic requests are at least 10
+          seconds apart. The villager follows rules while waiting.
+        </p>
+        <div id="llm-feedback" class="llm-feedback" role="status">
+          Ready to connect.
+        </div>
+        <div class="llm-actions">
+          <button
+            type="button"
+            id="llm-disconnect"
+            class="secondary-button"
+            hidden
+          >
+            Disconnect</button
+          ><button type="button" id="llm-think" class="secondary-button" hidden>
+            Think now</button
+          ><button type="submit" id="llm-connect" class="primary-button">
+            Connect LLM
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="about">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <h2>A life of its own.</h2>
+          <button class="icon-button" aria-label="Close about">
+            <svg><use href="#i-close" /></svg>
+          </button>
+        </div>
+      </form>
+      <p>
+        Welcome to Lantern Bay, a tiny fishing village built around routines,
+        encounters and memories.
+      </p>
+      <p>
+        Every fifteen game minutes, each villager observes the world, recalls a
+        few memories, chooses an activity, and takes a walk. Select a villager
+        to follow their story. A storm or festival changes everyone’s plans.
+      </p>
+      <p>
+        The village runs on rules, with no API key. Select a villager and choose
+        Connect LLM to give them a model through your provider. External agents
+        can also connect through the local API. The village keeps moving while a
+        model thinks.
+      </p>
+      <div class="about-note">
+        Memories last for this server session. Save a recording to revisit a
+        story after the session ends. Replay is a viewer; it doesn’t restore a
+        running simulation.
+      </div>
+      <p class="about-signoff">Made for watching the little things.</p>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>
