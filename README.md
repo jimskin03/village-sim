@@ -1,7 +1,7 @@
 # Lantern Bay · Village Sim
 
-A small, autonomous 2D fishing village. Villagers work, wander, talk, remember and
-follow their own routines while lanterns flicker beside the water. Runs locally
+A small, autonomous 2D fishing village. Villagers work toward daily goals, make
+friends, talk and remember while lanterns flicker beside the water. Runs locally
 with **Python 3.11+**, a modern browser, and **no dependencies or API key**.
 
 ![The village at night](docs/assets/village-night-background.jpg)
@@ -23,10 +23,25 @@ python3 -m village_sim --port 8080 --agents 5 --interval 1 --seed 42
 
 The viewer works on desktop and phone. Pause, advance a single step, adjust speed,
 choose 1–8 villagers in settings, or introduce a passing storm or lantern festival.
-Select a villager on the map or a card to inspect their persona, daily plan and
-session memories. Toggle place labels or zoom using the map controls.
+Select a villager on the map or a card to inspect their persona, daily goals,
+friendships, daily plan and session memories. Goal progress and familiar faces
+appear in **Story**; select a friend to take a closer look at them.
 
-**Save this story** downloads the session as JSON. **Open a recording** replays it
+The village fills the browser window with floating playback and map controls.
+Open **Villagers**, **Journal** or **Events** from the dock when you want more
+detail; close a panel or press Escape to return to the unobstructed village.
+Selecting a villager opens their details and centers the map on them. Drag,
+scroll or swipe to explore the enlarged canvas, use **Overview** to see the whole
+village, and toggle labels or zoom with the map controls. The page stays in place
+while panels scroll independently.
+
+Each day, villagers set a goal tied to their craft and, when they have company,
+a goal to share a conversation. They pursue unfinished work during working hours
+and seek out familiar faces on their afternoon break. Conversations strengthen
+friendships, and completed goals become memories in the village journal. Storms,
+festivals and model decisions can change how the day unfolds.
+
+In settings, **Save this story** downloads the session as JSON. **Open a recording** replays it
 with play/pause, single-step and a scrubber. The live world keeps running during
 replay. A recording is for viewing, not restoring a simulation.
 
@@ -99,7 +114,7 @@ See the [technical contract](docs/technical-spec.md) and
 python3 -m unittest discover -s tests -v
 ```
 
-Tests cover a full unattended day, map connectivity, deterministic execution,
+Tests cover daily goals and friendships, a full unattended day, map connectivity, deterministic execution,
 session memory beyond 100 steps, provider changes, external action validation,
 weather and festival reactions, HTTP controls, streaming and recording. Model tests
 use a local mock HTTP provider and cover actual request formatting, independent

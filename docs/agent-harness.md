@@ -27,8 +27,11 @@ curl -s http://127.0.0.1:8000/api/agents/mara/observation \
 ```
 
 The observation includes `step`, game time, weather, festival status, the agent's
-full persona and session memory, nearby agents, relevant memories, available named
-places, and a `suggested_action` from the rule-based brain. Use this context with
+full persona, daily goals, relationships and session memory, nearby agents, active
+villager summaries, relevant memories, available named places, and a
+`suggested_action` from the rule-based brain. Goals expose their title, target,
+progress and completion state so a harness can help the villager pursue them.
+Use this context with
 any model you choose, then submit the action **with the observed step**:
 
 ```bash

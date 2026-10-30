@@ -22,9 +22,57 @@ let connected = false,
   toastTimer,
   showLabels = false;
 let brainAgent = null;
+let activePanel = null,
+  panelTrigger = null;
 const color = (value) => (/^#[0-9a-f]{6}$/i.test(value) ? value : "#b6c6a2");
 const portrait = (a) =>
   `<span class="portrait" style="--agent-color:${color(a.color)}" aria-hidden="true"></span>`;
+
+function openPanel(id, trigger = document.activeElement) {
+  const panel = document.getElementById(id);
+  if (!panel || activePanel === id) return;
+  document.querySelectorAll(".map-panel").forEach((other) => {
+    other.hidden = other !== panel;
+  });
+  document.querySelectorAll("[data-panel]").forEach((button) => {
+    button.setAttribute("aria-expanded", String(button.dataset.panel === id));
+  });
+  activePanel = id;
+  panelTrigger = trigger;
+  panel.querySelector("[data-panel-close]").focus({ preventScroll: true });
+}
+function closePanel() {
+  if (!activePanel) return;
+  const panel = document.getElementById(activePanel);
+  const focusInPanel = panel.contains(document.activeElement);
+  panel.hidden = true;
+  document.querySelectorAll("[data-panel]").forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+  });
+  if (focusInPanel) {
+    const trigger = panelTrigger?.isConnected && !panelTrigger.closest("[hidden]")
+      ? panelTrigger
+      : document.querySelector(`[data-panel="${activePanel}"]`);
+    trigger?.focus({ preventScroll: true });
+  }
+  activePanel = null;
+  panelTrigger = null;
+}
+document.querySelectorAll("[data-panel]").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (activePanel === button.dataset.panel) closePanel();
+    else openPanel(button.dataset.panel, button);
+  });
+});
+document.querySelectorAll("[data-panel-close]").forEach((button) => {
+  button.addEventListener("click", closePanel);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activePanel && !$("dialog[open]")) {
+    event.preventDefault();
+    closePanel();
+  }
+});
 
 function toast(message) {
   $("#toast").textContent = message;
@@ -121,7 +169,8 @@ function render(next) {
   );
   $("#play").title = $("#play").getAttribute("aria-label");
   $("#speed").disabled = Boolean(recording);
-  $("#settings-open").disabled = Boolean(recording);
+  $("#population").disabled = Boolean(recording);
+  $("#reset").disabled = Boolean(recording);
   document.querySelectorAll("[data-event]").forEach((b) => {
     b.disabled = Boolean(recording);
   });
@@ -164,7 +213,11 @@ function renderSprites() {
   });
 }
 function renderCards() {
-  $("#resident-cards").innerHTML = state.agents
+  const cards = $("#resident-cards");
+  const focusedAgent = cards.contains(document.activeElement)
+    ? document.activeElement.dataset.agent
+    : null;
+  cards.innerHTML = state.agents
     .map(
       (a) =>
         `<button class="resident-card${a.id === selected ? " selected" : ""}" data-agent="${esc(a.id)}" aria-pressed="${a.id === selected}">${portrait(a)}<span class="resident-info"><span class="resident-name">${esc(a.name)}${a.provider ? '<i class="provider-dot" title="External provider attached"></i>' : ""}</span><span class="resident-role">${esc(a.role)}</span><span class="resident-activity">${esc(a.activity)}</span></span><span class="resident-arrow" aria-hidden="true">›</span></button>`,
@@ -175,12 +228,62 @@ function renderCards() {
     .forEach((el) =>
       el.addEventListener("click", () => selectAgent(el.dataset.agent)),
     );
+  if (focusedAgent) {
+    const replacement = cards.querySelector(`[data-agent="${CSS.escape(focusedAgent)}"]`);
+    (replacement || $("#villagers-panel [data-panel-close]"))?.focus({ preventScroll: true });
+  }
 }
 function selectAgent(id) {
+  const focusInPanel = $("#villagers-panel")?.contains(document.activeElement);
   selected = id;
   renderSprites();
   renderCards();
   renderDetails();
+  openPanel("villagers-panel");
+  const panelBody = $("#villagers-panel .panel-body");
+  if (panelBody) panelBody.scrollTop = 0;
+  const cards = $("#resident-cards"),
+    card = cards.querySelector(`[data-agent="${CSS.escape(id)}"]`);
+  if (card) {
+    cards.scrollLeft += card.getBoundingClientRect().left
+      - cards.getBoundingClientRect().left
+      - (cards.clientWidth - card.offsetWidth) / 2;
+    if (focusInPanel) card.focus({ preventScroll: true });
+  }
+  const sprite = document.querySelector(`#villagers [data-id="${CSS.escape(id)}"]`);
+  if (sprite && !mapOverview) {
+    mapViewport.scrollTo({
+      left: sprite.offsetLeft - mapViewport.clientWidth / 2,
+      top: sprite.offsetTop - mapViewport.clientHeight / 2,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+  }
+}
+function renderGoals(agent) {
+  if (!agent.goals?.length) return "";
+  return `<p class="detail-label">DAY ${state.day} GOALS</p><div class="goal-list">${agent.goals
+    .map(
+      (goal) =>
+        `<div class="goal-item${goal.completed ? " goal-complete" : ""}"><div class="goal-heading"><span class="goal-title">${esc(goal.title)}</span><span class="goal-status">${goal.completed ? "Done ✓" : `${goal.progress} / ${goal.target}`}</span></div><progress class="goal-progress" value="${goal.progress}" max="${goal.target}" aria-label="${esc(goal.title)}"></progress></div>`,
+    )
+    .join("")}</div>`;
+}
+function renderRelationships(agent) {
+  const connections = Object.entries(agent.relationships).sort(
+    ([first, a], [second, b]) => b - a || first.localeCompare(second),
+  );
+  const heading = '<p class="detail-label">FAMILIAR FACES</p>';
+  if (!connections.length)
+    return `${heading}<p class="empty-note">Friendships begin with a conversation. There are still people to get to know.</p>`;
+  return `${heading}<div class="relationship-list">${connections
+    .map(([id, count]) => {
+      const other = state.agents.find((a) => a.id === id);
+      const name = other?.name || id.charAt(0).toUpperCase() + id.slice(1);
+      return `<button class="relationship-item" data-friend="${esc(id)}"${other ? "" : " disabled"}><span>${esc(name)}<small>${count >= 3 ? "Friend" : "Getting acquainted"}${other ? "" : " · Away from the village"}</small></span><span class="relationship-meta">${count} conversation${count === 1 ? "" : "s"}${other ? " ›" : ""}</span></button>`;
+    })
+    .join("")}</div>`;
 }
 function renderDetails() {
   const a = state.agents.find((a) => a.id === selected);
@@ -190,10 +293,16 @@ function renderDetails() {
     `<div class="profile">${portrait(a)}<div><h2>${esc(a.name)}</h2><p>The ${esc(a.role)}</p><div class="profile-status">${a.provider ? esc(a.provider) : "Following their own rhythm"}</div></div></div>`;
   const detail = $("#agent-details"),
     scroll = detail.scrollTop;
+  const focusedFriend = detail.contains(document.activeElement)
+    ? document.activeElement.dataset.friend
+    : null;
   if (tab === "story") {
     const destination =
       world?.places.find((p) => p.id === a.destination)?.name || a.destination;
-    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}</p><p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p><div class="detail-stats"><span><strong>${a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
+    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}</p><p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
+    detail.querySelectorAll("[data-friend]").forEach((button) =>
+      button.addEventListener("click", () => selectAgent(button.dataset.friend)),
+    );
   } else if (tab === "plan") {
     const current = [...a.plan]
       .reverse()
@@ -204,6 +313,11 @@ function renderDetails() {
           `<div class="plan-item${p === current ? " current" : ""}"><time>${String(p.hour).padStart(2, "0")}:00</time><span>${esc(p.activity)}<small>${esc(world?.places.find((place) => place.id === p.place)?.name || p.place)}</small></span></div>`,
       )
       .join("");
+    if (a.goals?.length)
+      detail.insertAdjacentHTML(
+        "afterbegin",
+        '<p class="empty-note">Unfinished work goals and time with familiar faces can shape this routine. Follow their progress in Story.</p>',
+      );
     if (state.weather === "storm" || state.festival)
       detail.insertAdjacentHTML(
         "afterbegin",
@@ -221,6 +335,10 @@ function renderDetails() {
       : '<p class="empty-note">A fresh start. Their first memories are still to come.</p>';
   }
   detail.scrollTop = scroll;
+  if (focusedFriend) {
+    const replacement = detail.querySelector(`[data-friend="${CSS.escape(focusedFriend)}"]:not(:disabled)`);
+    (replacement || $("#villagers-panel [data-panel-close]"))?.focus({ preventScroll: true });
+  }
 }
 
 function brainDescription(brain) {
@@ -400,7 +518,10 @@ $("#population").addEventListener("change", (e) =>
   control("population", { count: Number(e.target.value) }),
 );
 $("#settings-open").addEventListener("click", () => $("#settings").showModal());
-$("#about-open").addEventListener("click", () => $("#about").showModal());
+$("#about-open").addEventListener("click", () => {
+  $("#settings").close();
+  $("#about").showModal();
+});
 $("dialog#settings").addEventListener("click", (e) => {
   if (e.target === e.currentTarget) e.currentTarget.close();
 });
@@ -441,11 +562,80 @@ $("#labels").addEventListener("click", () => {
   $("#place-labels").hidden = !showLabels;
   $("#labels").setAttribute("aria-pressed", String(showLabels));
 });
-$("#zoom").addEventListener("click", () => {
-  const zoomed = $("#scene-inner").classList.toggle("zoomed");
-  $("#zoom").setAttribute("aria-pressed", String(zoomed));
-  $("#zoom").textContent = zoomed ? "−" : "＋";
+const mapViewport = $("#scene-viewport"),
+  mapCanvas = $("#scene-inner");
+let mapOverview = false,
+  mapZoom = false,
+  mapDrag = null;
+function resizeMap() {
+  const width = mapViewport.clientWidth,
+    height = mapViewport.clientHeight;
+  const enlargedWidth = Math.max(
+    window.innerWidth > 820 ? 2048 : 1344,
+    width,
+    height * 16 / 9,
+  );
+  const canvasWidth = mapOverview
+    ? Math.min(width, height * 16 / 9)
+    : enlargedWidth * (mapZoom ? 1.4 : 1);
+  mapCanvas.style.setProperty("--map-width", `${canvasWidth}px`);
+  mapViewport.classList.toggle("overview", mapOverview);
+  $("#overview").setAttribute("aria-pressed", String(mapOverview));
+  $("#map-hint").textContent = mapOverview
+    ? "Whole village · Zoom to explore"
+    : "Drag or scroll to explore";
+  $("#zoom").setAttribute("aria-pressed", String(mapZoom));
+  $("#zoom").setAttribute(
+    "aria-label",
+    mapZoom ? "Zoom out one level" : "Zoom into the village",
+  );
+  $("#zoom").title = mapZoom ? "Zoom out one level" : "Zoom into the village";
+  $("#zoom").textContent = mapZoom ? "−" : "＋";
+  // Keep the village centered when changing views or resizing the browser.
+  mapViewport.scrollLeft = (canvasWidth - width) / 2;
+  mapViewport.scrollTop = (canvasWidth * 9 / 16 - height) * 0.55;
+}
+$("#overview").addEventListener("click", () => {
+  mapOverview = !mapOverview;
+  mapZoom = false;
+  resizeMap();
 });
+$("#zoom").addEventListener("click", () => {
+  mapZoom = mapOverview ? false : !mapZoom;
+  mapOverview = false;
+  resizeMap();
+});
+mapViewport.addEventListener("pointerdown", (event) => {
+  if (
+    mapOverview || event.pointerType !== "mouse" || event.button !== 0 ||
+    event.target.closest("button")
+  ) return;
+  mapDrag = {
+    id: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    left: mapViewport.scrollLeft,
+    top: mapViewport.scrollTop,
+  };
+  mapViewport.setPointerCapture(event.pointerId);
+  mapViewport.classList.add("dragging");
+  mapViewport.focus({ preventScroll: true });
+  event.preventDefault();
+});
+mapViewport.addEventListener("pointermove", (event) => {
+  if (!mapDrag || mapDrag.id !== event.pointerId) return;
+  mapViewport.scrollLeft = mapDrag.left + mapDrag.x - event.clientX;
+  mapViewport.scrollTop = mapDrag.top + mapDrag.y - event.clientY;
+});
+function stopMapDrag() {
+  mapDrag = null;
+  mapViewport.classList.remove("dragging");
+}
+mapViewport.addEventListener("pointerup", stopMapDrag);
+mapViewport.addEventListener("pointercancel", stopMapDrag);
+mapViewport.addEventListener("lostpointercapture", stopMapDrag);
+new ResizeObserver(resizeMap).observe(mapViewport);
+resizeMap();
 $("#export").addEventListener("click", async () => {
   try {
     const data =
@@ -522,7 +712,24 @@ function validRecording(data) {
               typeof p.activity === "string",
           ) &&
           a.relationships &&
-          typeof a.relationships === "object",
+          typeof a.relationships === "object" &&
+          !Array.isArray(a.relationships) &&
+          Object.values(a.relationships).every(
+            (count) => Number.isInteger(count) && count >= 0,
+          ) &&
+          (a.goals === undefined ||
+            (Array.isArray(a.goals) &&
+              a.goals.every(
+                (goal) =>
+                  goal &&
+                  typeof goal.title === "string" &&
+                  Number.isInteger(goal.target) &&
+                  goal.target > 0 &&
+                  Number.isInteger(goal.progress) &&
+                  goal.progress >= 0 &&
+                  goal.progress <= goal.target &&
+                  typeof goal.completed === "boolean",
+              ))),
       ),
   );
 }
@@ -542,6 +749,8 @@ $("#import").addEventListener("change", async (e) => {
     clearInterval(replayTimer);
     $("#replay-bar").hidden = false;
     $("#replay-position").max = data.snapshots.length - 1;
+    $("#settings").close();
+    closePanel();
     renderPlaces();
     renderReplay();
     toast("Recording opened. The live village continues in the background.");
@@ -569,6 +778,7 @@ $("#return-live").addEventListener("click", async () => {
   replayPlaying = false;
   recording = null;
   $("#replay-bar").hidden = true;
+  $("#play").focus({ preventScroll: true });
   try {
     world = await fetch("/api/world").then((r) => r.json());
     renderPlaces();

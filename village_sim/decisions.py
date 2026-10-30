@@ -35,4 +35,20 @@ def decide(agent, observation: dict) -> Action:
         return Action("fire", "celebrating the lantern festival")
     hour = observation["minute"] // 60
     item = next(p for p in reversed(agent.plan) if p["hour"] <= hour)
+    work = next((g for g in agent.goals if g["id"] == "work"), None)
+    if (6 <= hour < 13 or 15 <= hour < 18) and work and not work["completed"]:
+        activity = {
+            "fisher": "fishing for the village supper",
+            "gardener": "gathering herbs for the village supper",
+            "boatwright": "checking the village boats",
+        }[agent.role]
+        return Action(work["place"], activity)
+    social = next((g for g in agent.goals if g["id"] == "social"), None)
+    if 13 <= hour < 15 and social:
+        friend = next(
+            (v for v in observation.get("villagers", []) if v["id"] == social["partner"]),
+            None,
+        )
+        if friend:
+            return Action(social["place"], f"making time for {friend['name']}")
     return Action(item["place"], item["activity"])

@@ -80,7 +80,8 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
     context["recent_memories"] = agent["memory"][-12:]
     instructions = (
         "You inhabit a villager in a small fishing village. Act according to your persona, "
-        "memories, relationships, daily plan, time and nearby people. Choose one believable "
+        "memories, relationships, daily goals, daily plan, time and nearby people. "
+        "Work toward unfinished goals and make time for familiar villagers. Choose one believable "
         "activity for the next few game hours. Respect storms, sleep and other villagers. "
         "Return only a JSON object with place (an available place id), activity (1-100 "
         "characters), and speech (optional, at most 200 characters, or null). Do not use "

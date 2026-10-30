@@ -97,6 +97,7 @@ class Agent:
     memory: list[dict] = field(default_factory=list)
     plan: list[dict] = field(default_factory=list)
     relationships: dict[str, int] = field(default_factory=dict)
+    goals: list[dict] = field(default_factory=list)
     provider: str | None = None
     provider_until: int = 0
     last_chat: int = -8
@@ -177,6 +178,73 @@ class Simulation:
                 self.event(
                     f"{self.agents[aid].name} joined the village.", "arrival", [aid]
                 )
+        for agent in self.agents.values():
+            self._refresh_goals(agent)
+
+    def _social_goal(self, agent: Agent) -> dict | None:
+        others = [other for other in self.agents.values() if other.id != agent.id]
+        if not others:
+            return None
+        # Rotate equal acquaintances across days; established friendships win.
+        offset = (self.day + list(self.agents).index(agent.id)) % len(others)
+        others = others[offset:] + others[:offset]
+        partner = max(others, key=lambda other: agent.relationships.get(other.id, 0))
+        return {
+            "id": "social",
+            "day": self.day,
+            "title": f"Share a conversation with {partner.name}",
+            "target": 1,
+            "progress": 0,
+            "completed": False,
+            "place": "fire" if agent.relationships.get(partner.id, 0) >= 3 else "bench",
+            "partner": partner.id,
+        }
+
+    def _refresh_goals(self, agent: Agent):
+        if not agent.goals or agent.goals[0]["day"] != self.day:
+            place, title = {
+                "fisher": ("jetty", "Catch 3 fish for the village supper"),
+                "gardener": ("garden", "Gather 3 herb bundles for the village supper"),
+                "boatwright": ("shore", "Check 3 boats for the village"),
+            }[agent.role]
+            agent.goals = [
+                {
+                    "id": "work",
+                    "day": self.day,
+                    "title": title,
+                    "target": 3,
+                    "progress": 0,
+                    "completed": False,
+                    "place": place,
+                    "partner": None,
+                }
+            ]
+        social = next((g for g in agent.goals if g["id"] == "social"), None)
+        # A completed goal remains a record of the day even when its partner leaves.
+        if social and (social["completed"] or social["partner"] in self.agents):
+            return
+        if social:
+            agent.goals.remove(social)
+        replacement = self._social_goal(agent)
+        if replacement:
+            agent.goals.append(replacement)
+
+    def _progress_goal(self, agent: Agent, kind: str, *, place=None, partner=None):
+        goal = next((g for g in agent.goals if g["id"] == kind), None)
+        if not goal or goal["completed"]:
+            return
+        if kind == "work" and goal["place"] != place:
+            return
+        if kind == "social" and goal["partner"] != partner:
+            return
+        goal["progress"] = min(goal["target"], goal["progress"] + 1)
+        if goal["progress"] == goal["target"]:
+            goal["completed"] = True
+            self.event(
+                f"{agent.name} completed a daily goal: {goal['title']}.",
+                "goal",
+                [agent.id],
+            )
 
     def observe(self, aid: str) -> dict:
         agent = self.agents[aid]
@@ -188,10 +256,12 @@ class Simulation:
         # Retrieval is a view, never deletion: all session memories remain stored.
         relevant = sorted(
             agent.memory,
-            key=lambda m: (m["kind"] in ("conversation", "reflection"), m["step"]),
+            key=lambda m: (
+                m["kind"] in ("conversation", "reflection", "goal"), m["step"]
+            ),
             reverse=True,
         )[:12]
-        return {
+        observation = {
             "step": self.step,
             "day": self.day,
             "minute": self.minute,
@@ -201,19 +271,19 @@ class Simulation:
             "nearby": [
                 {"id": a.id, "name": a.name, "activity": a.activity} for a in nearby
             ],
+            "villagers": [
+                {
+                    "id": a.id, "name": a.name, "activity": a.activity,
+                    "destination": a.destination,
+                }
+                for a in self.agents.values()
+                if a.id != aid
+            ],
             "relevant_memories": relevant,
             "places": self.world.config["places"],
-            "suggested_action": asdict(
-                decide(
-                    agent,
-                    {
-                        "minute": self.minute,
-                        "weather": self.weather,
-                        "festival": self.step < self.festival_until,
-                    },
-                )
-            ),
         }
+        observation["suggested_action"] = asdict(decide(agent, observation))
+        return observation
 
     def submit(self, aid: str, data: dict):
         if aid not in self.agents:
@@ -280,11 +350,15 @@ class Simulation:
             agent.speech = None
             if self.day != previous_day:
                 agent.plan = daily_plan(agent)
+                completed = sum(goal["completed"] for goal in agent.goals)
                 self.event(
-                    f"{agent.name} reflects on {len(agent.memory)} memories and looks forward to another day.",
+                    f"{agent.name} completed {completed} of {len(agent.goals)} daily goals "
+                    f"and reflects on {len(agent.memory)} memories before a new day.",
                     "reflection",
                     [agent.id],
                 )
+                self._refresh_goals(agent)
+        for agent in self.agents.values():
             observation = self.observe(agent.id)
             action = self.pending.pop(agent.id, None)
             # World events always take precedence over an optional external plan.
@@ -329,6 +403,7 @@ class Simulation:
                     "nets": "repaired a worn patch of net",
                 }[action.place]
                 self.event(f"{agent.name} {detail}.", "work", [agent.id])
+                self._progress_goal(agent, "work", place=action.place)
         self._converse()
         return self.snapshot()
 
@@ -342,27 +417,46 @@ class Simulation:
             "Let’s look after this little place together.",
         ]
         villagers = list(self.agents.values())
-        for i, first in enumerate(villagers):
-            for other in villagers[i + 1 :]:
-                if min(self.step - first.last_chat, self.step - other.last_chat) < 8:
-                    continue
-                if "sleeping" in (first.activity, other.activity):
-                    continue
-                if abs(first.x - other.x) + abs(first.y - other.y) <= 2:
-                    line = self.rng.choice(lines)
-                    first.speech = line
-                    first.last_chat = other.last_chat = self.step
-                    first.relationships[other.id] = (
-                        first.relationships.get(other.id, 0) + 1
-                    )
-                    other.relationships[first.id] = (
-                        other.relationships.get(first.id, 0) + 1
-                    )
-                    self.event(
-                        f"{first.name} to {other.name}: “{line}”",
-                        "conversation",
-                        [first.id, other.id],
-                    )
+        pairs = [
+            (first, other)
+            for i, first in enumerate(villagers)
+            for other in villagers[i + 1 :]
+        ]
+
+        def priority(pair):
+            first, other = pair
+            intentions = sum(
+                goal["id"] == "social" and not goal["completed"]
+                and goal["partner"] == partner.id
+                for agent, partner in ((first, other), (other, first))
+                for goal in agent.goals
+            )
+            return -intentions, first.relationships.get(other.id, 0)
+
+        # Honor plans to talk, then make room for quieter acquaintances. A fixed
+        # pair order otherwise lets the first two residents monopolize every chat.
+        for first, other in sorted(pairs, key=priority):
+            if min(self.step - first.last_chat, self.step - other.last_chat) < 8:
+                continue
+            if "sleeping" in (first.activity, other.activity):
+                continue
+            if abs(first.x - other.x) + abs(first.y - other.y) <= 2:
+                line = self.rng.choice(lines)
+                first.speech = line
+                first.last_chat = other.last_chat = self.step
+                first.relationships[other.id] = (
+                    first.relationships.get(other.id, 0) + 1
+                )
+                other.relationships[first.id] = (
+                    other.relationships.get(first.id, 0) + 1
+                )
+                self.event(
+                    f"{first.name} to {other.name}: “{line}”",
+                    "conversation",
+                    [first.id, other.id],
+                )
+                self._progress_goal(first, "social", partner=other.id)
+                self._progress_goal(other, "social", partner=first.id)
 
     def snapshot(self):
         return {

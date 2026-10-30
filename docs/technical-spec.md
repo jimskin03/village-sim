@@ -18,6 +18,22 @@ from every other named place; tests enforce this. A* uses four cardinal neighbor
 Agents travel at most three tiles per game step. Agents may share tiles. The
 viewer places their feet at the center of their tile and interpolates movement.
 
+The viewer uses a map that fills the browser window, with a default canvas at least
+2048×1152 pixels on desktop or 1344×756 pixels on phone/tablet (at most 820 pixels
+wide). These minimums provide at least three times the rendered area of the
+previous viewer's largest map at each breakpoint. The viewport follows the
+browser's dynamic viewport height, without document scrolling. Scrolling, mouse dragging, touch swipes and
+keyboard scrolling explore the canvas; pinned controls toggle labels, further
+zoom and a whole-map overview. Selecting a resident centers their position in
+the enlarged view. The underlying navigation grid and original art are unchanged.
+Floating controls show the clock, playback and map tools. Villagers, journal and
+events open in nonmodal panels from the dock, with only one panel open at a time.
+Panels scroll independently, close with their close button or Escape, and return
+keyboard focus to their opener. Selecting a sprite opens the villagers panel.
+Settings contain recording export/import and the About dialog; the replay
+scrubber stays on screen above the dock. During replay, settings remain available
+while population changes and reset are disabled.
+
 ## Clock and session
 
 A new world begins at 18:00 on day 1, with three villagers by default. One step is
@@ -37,11 +53,28 @@ clears recording history. A server restart starts fresh.
 The sequence per tick is: advance time, update world events, perceive nearby
 villagers, retrieve relevant memories, choose an optional external action or a
 rule-based routine, reflect on a new day, execute movement/work, then converse.
-The rule-based daily schedule is refreshed once per day. A decision function can
+The rule-based daily schedule and goals are refreshed once per day. Each villager
+has a craft goal (three fish, herb bundles or boat checks at their primary work
+location) and, when another resident is present, a goal to converse with one
+particular villager. Unfinished craft goals guide choices during working hours;
+afternoon breaks make time for the social goal's partner. Partners favor the
+strongest active relationship, with deterministic rotation among equal ties.
+Acquaintances meet at the bench, while friends with at least three shared
+conversations meet at the hearth. Sleep, storms and festivals keep their priority.
+
+Work progress advances only after arrival and the four-step work cooldown. Social
+progress requires an actual nearby conversation with the chosen partner; speech
+alone does not count. Completion emits one `goal` journal event and memory. Daily
+reflection records how many goals were completed before starting the new day's
+goals. Same-day departures retain progress; returning on a later day renews goals.
+An unfinished social goal is replaced when its partner leaves, while completed
+goals remain visible for the rest of the day.
+
+A decision function can
 also be injected into `Simulation(decision=...)` for in-process experiments.
 
-Memories are append-only session records. Retrieval prioritizes conversations and
-reflections, then recency, returning up to twelve records without deleting older
+Memories are append-only session records. Retrieval prioritizes conversations,
+reflections and completed goals, then recency, returning up to twelve records without deleting older
 ones. All memories are retained in snapshots. Conversations increase symmetric
 relationship counts with an eight-step cooldown. Reflection records a daily
 summary. Rule-based reflection uses no embeddings or model calls.
@@ -77,8 +110,16 @@ session. Each event includes step, day and formatted time.
 ```
 
 Agent fields: `id`, `name`, `role`, `home`, `color`, `persona`, `x`, `y`, `activity`,
-`destination`, `speech`, `memory`, `plan`, `relationships`, `provider`,
+`destination`, `speech`, `memory`, `plan`, `relationships`, `goals`, `provider`,
 `provider_until`, `last_chat`, `last_work`, `work_count`.
+
+`goals` is an additive v1 field: a list of objects with `id` (`work` or `social`),
+`day`, `title`, `target`, `progress`, `completed`, `place` and `partner` (a villager
+ID for social goals, otherwise null). Relationships remain symmetric conversation
+counts; three conversations mark a friendship in the viewer. Observations include
+active `villagers` summaries (`id`, `name`, `activity`, `destination`) for planning.
+Old v1 recordings without goals remain viewable; goals are never recalculated
+during replay.
 
 The HTTP session adds public `brains` status (model, base URL, call interval,
 request/decision counts and errors), `paused`, `interval` (real seconds per step), and `revision`
