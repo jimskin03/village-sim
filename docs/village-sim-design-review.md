@@ -239,6 +239,13 @@ model. This ties to question 6 (memory depth).
 LLM-driven behavior) but is deliberately smaller: one village, one scene, browser-first, and no
 reverie stack. Study reverie for ideas, do not copy it wholesale, to avoid scope creep.
 
+**Streaming viewer and async planning.** The viewer streams the world live as it runs. The screen
+is always alive and never waits for planning to finish. The rule-based layer drives visible behavior
+immediately (walking, routines, reactions), while LLM planning runs asynchronously in the
+background and updates an agent's plan when it lands. This follows Reverie's own approach of
+showing the world live while agents plan in the background. The motivation is that Reverie's
+planning phase is slow and expensive, so planning must not block the viewer.
+
 ## Suggested next step
 
 Questions 1 to 4 are now decided. The remaining work is to decide questions 5 to 10, then write a
