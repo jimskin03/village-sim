@@ -919,28 +919,37 @@ $("#labels").addEventListener("click", () => {
 });
 const mapViewport = $("#scene-viewport"),
   mapCanvas = $("#scene-inner");
-let mapOverview = true,
+let mapOverview = false,
   mapZoom = 1,
   mapDrag = null;
 function resizeMap() {
+  // Overview reserves room around the map; Fill screen runs behind the HUD.
+  mapViewport.classList.toggle("overview", mapOverview);
   const width = mapViewport.clientWidth,
     height = mapViewport.clientHeight;
   const oldWidth = mapCanvas.clientWidth || width;
   const centerX = mapOverview || oldWidth <= width ? 0.5 : (mapViewport.scrollLeft + width / 2) / oldWidth;
   const centerY = mapOverview || oldWidth * 9 / 16 <= height ? 0.5 : (mapViewport.scrollTop + height / 2) / (oldWidth * 9 / 16);
-  const canvasWidth = Math.max(1, Math.min(width, height * 16 / 9)) * mapZoom;
+  const canvasWidth = Math.max(1, mapOverview
+    ? Math.min(width, height * 16 / 9)
+    : Math.max(width, height * 16 / 9) * mapZoom);
   mapCanvas.style.setProperty("--map-width", `${canvasWidth}px`);
-  mapViewport.classList.toggle("overview", mapOverview);
+  $("#fill-screen").setAttribute("aria-pressed", String(!mapOverview && mapZoom === 1));
   $("#overview").setAttribute("aria-pressed", String(mapOverview));
   $("#map-hint").textContent = mapOverview
     ? "Whole village · Zoom to explore"
     : "Drag or scroll to explore";
   $("#zoom").disabled = mapZoom >= 3;
   $("#zoom-out").disabled = mapOverview;
-  $("#map-scale").textContent = `${Math.round(mapZoom * 100)}%`;
+  $("#map-scale").textContent = mapOverview ? "Fit" : `${Math.round(mapZoom * 100)}%`;
   mapViewport.scrollLeft = centerX * canvasWidth - width / 2;
   mapViewport.scrollTop = centerY * canvasWidth * 9 / 16 - height / 2;
 }
+$("#fill-screen").addEventListener("click", () => {
+  mapOverview = false;
+  mapZoom = 1;
+  resizeMap();
+});
 $("#overview").addEventListener("click", () => {
   mapOverview = true;
   mapZoom = 1;
@@ -948,12 +957,12 @@ $("#overview").addEventListener("click", () => {
 });
 $("#zoom").addEventListener("click", () => {
   mapZoom = Math.min(3, mapZoom + 0.5);
-  mapOverview = mapZoom === 1;
+  mapOverview = false;
   resizeMap();
 });
 $("#zoom-out").addEventListener("click", () => {
-  mapZoom = Math.max(1, mapZoom - 0.5);
-  mapOverview = mapZoom === 1;
+  if (mapZoom > 1) mapZoom = Math.max(1, mapZoom - 0.5);
+  else mapOverview = true;
   resizeMap();
 });
 mapViewport.addEventListener("pointerdown", (event) => {

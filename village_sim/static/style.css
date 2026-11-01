@@ -156,7 +156,8 @@ main {
 }
 .scene-viewport {
   position: absolute;
-  inset: 150px 20px 120px;
+  inset: 0;
+  z-index: 0;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
@@ -169,6 +170,7 @@ main {
   user-select: none;
 }
 .scene-viewport.overview {
+  inset: 150px 20px 120px;
   display: grid;
   place-items: center;
   cursor: default;
@@ -2013,7 +2015,7 @@ body:has(#replay-bar:not([hidden])) .toast {
 .operator-status { line-height: 1.5; }
 body.panel-open .scene-caption,
 body.panel-open .scene-footer { display: none; }
-body:has(#replay-bar:not([hidden])) .scene-viewport { bottom: 190px; }
+body:has(#replay-bar:not([hidden])) .scene-viewport.overview { bottom: 190px; }
 @media (min-width: 701px) {
   body.panel-open .scene-viewport { right: calc(min(360px, 44vw) + 36px); }
   body.panel-open .scene-tools { right: calc(min(360px, 44vw) + 36px); }
@@ -2025,10 +2027,10 @@ body:has(#replay-bar:not([hidden])) .scene-viewport { bottom: 190px; }
   .scene-tools { top: 142px; left: auto; right: 12px; }
   .scene-tools button { width: 32px; height: 36px; }
   .map-navigation button { min-height: 36px; }
-  .scene-viewport { inset: 188px 12px 150px; }
+  .scene-viewport.overview { inset: 188px 12px 150px; }
   .map-panel { top: 48%; bottom: 88px; }
   body.panel-open .scene-viewport { bottom: calc(52dvh + 12px); }
-  body:has(#replay-bar:not([hidden])) .scene-viewport { bottom: 240px; }
+  body:has(#replay-bar:not([hidden])) .scene-viewport.overview { bottom: 240px; }
   body.panel-open:has(#replay-bar:not([hidden])) .scene-viewport { bottom: calc(52dvh + 12px); }
   .overview .state-marker:not(:hover):not(:focus) { font-size: 0; padding: 3px; border-radius: 50%; }
   .overview .state-marker > span[aria-hidden] { font-size: 12px; }
@@ -2036,6 +2038,9 @@ body:has(#replay-bar:not([hidden])) .scene-viewport { bottom: 190px; }
   .place-label { max-width: 70px; white-space: normal; text-align: center; }
 }
 @media (max-height: 500px) and (min-width: 701px) {
-  .scene-viewport { top: 128px; bottom: 90px; }
+  .scene-viewport.overview { top: 128px; bottom: 90px; }
   .scene-tools { top: 82px; bottom: auto; }
+}
+@media (max-width: 1000px) {
+  .map-navigation > span { display: none; }
 }

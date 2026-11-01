@@ -48,7 +48,7 @@ assert.equal(JSON.stringify(records), before);
 assert.equal(journalEntries([...records, {id:6, day:25, kind:'promise', text:fact}]).length, 4);
 """)
 
-    def test_zoom_out_and_overview_fit_the_available_map_space(self):
+    def test_default_fills_browser_and_overview_still_fits_the_whole_map(self):
         self.run_js(r"""
 const elements = new Map();
 const get = selector => {
@@ -65,24 +65,37 @@ const canvas = get('#scene-inner');
 const context = vm.createContext({$:get, ResizeObserver: class {observe(){}}, window:{}});
 vm.runInContext(source.slice(source.indexOf('const mapViewport ='), source.indexOf('$("#export").addEventListener')), context);
 const viewport = get('#scene-viewport');
+const fill = () => {
+ assert.ok(canvas.clientWidth >= viewport.clientWidth - 1);
+ assert.ok(canvas.clientWidth * 9/16 >= viewport.clientHeight - 1);
+ assert.equal(get('#fill-screen').attrs['aria-pressed'], 'true');
+ assert.equal(get('#overview').attrs['aria-pressed'], 'false');
+ assert.equal(get('#map-scale').textContent, '100%');
+};
 const fit = () => {
  assert.ok(canvas.clientWidth <= viewport.clientWidth + 1);
  assert.ok(canvas.clientWidth * 9/16 <= viewport.clientHeight + 1);
  assert.equal(get('#overview').attrs['aria-pressed'], 'true');
  assert.equal(get('#zoom-out').disabled, true);
+ assert.equal(get('#map-scale').textContent, 'Fit');
 };
-fit();
+fill();
 const initial = canvas.clientWidth;
 get('#zoom').listeners.click();
 assert.ok(canvas.clientWidth > initial);
 assert.equal(get('#zoom-out').disabled, false);
 get('#zoom-out').listeners.click();
+fill();
+get('#zoom-out').listeners.click();
 fit();
 get('#zoom').listeners.click(); get('#zoom').listeners.click();
 get('#overview').listeners.click(); fit();
-for (const [width,height] of [[864,530],[366,205],[353,239]]) {
+get('#fill-screen').listeners.click(); fill();
+for (const [width,height] of [[1366,768],[1366,656],[1280,800],[390,844],[731,457]]) {
  viewport.clientWidth = width; viewport.clientHeight = height;
- context.resizeMap(); fit();
+ context.resizeMap(); fill();
+ get('#overview').listeners.click(); fit();
+ get('#fill-screen').listeners.click(); fill();
 }
 """)
 
