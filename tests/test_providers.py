@@ -132,6 +132,24 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("secret-test-key", json.dumps(self.request("/api/recording")))
         self.assertNotIn("secret-test-key", repr(self.session.brains["mara"]))
 
+    def test_provider_receives_retrieved_old_memories_without_vectors(self):
+        with self.session.condition:
+            sim = self.session.sim
+            promise = sim.event("Mara promised Tom to repair his damaged boat.", "promise", ["mara", "tom"])
+            sim.agents["mara"].relationships["tom"] = promise["text"]
+            sim.agents["mara"].memory[-1].update(embedding=[1.0, 0.0], embedding_model="local-v1")
+            for _ in range(50):
+                sim.event("Mara sorted a net.", "work", ["mara"])
+        self.connect()
+        self.wait_for_brain()
+        context = json.loads(self.provider.calls[0]["body"]["messages"][1]["content"])
+        self.assertIn(promise["id"], [memory["id"] for memory in context["relevant_memories"]])
+        self.assertNotIn(promise["id"], [memory["id"] for memory in context["recent_memories"]])
+        for key in ("relevant_memories", "recent_memories"):
+            self.assertLessEqual(len(context[key]), 12)
+            self.assertTrue(all("embedding" not in memory for memory in context[key]))
+        self.assertEqual(sim.agents["mara"].memory[1]["embedding"], [1.0, 0.0])
+
     def test_slow_provider_does_not_block_clock_and_disconnect_discards_result(self):
         self.provider.release.clear()
         self.connect()

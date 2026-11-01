@@ -115,6 +115,25 @@ class ServerTests(unittest.TestCase):
             self.request("/api/agents/mara/join", {"provider": "Rejoined brain"}),
         )
 
+    def test_harness_can_query_its_own_long_term_memories(self):
+        with self.session.condition:
+            promise = self.session.sim.event("Mara promised Tom help with the damaged boat.",
+                                             "promise", ["mara", "tom"])
+            for _ in range(50):
+                self.session.sim.event("Mara sorted a net.", "work", ["mara"])
+        token = self.request("/api/agents/mara/join", {"provider": "Recall harness"})["token"]
+        path = "/api/agents/mara/observation?memory_query=damaged+boat+Tom"
+        observation = self.request(path, token=token)
+        self.assertEqual(observation["memory_query"], "damaged boat Tom")
+        self.assertEqual(observation["relevant_memories"][0]["id"], promise["id"])
+        self.assertLessEqual(len(observation["relevant_memories"]), 12)
+        with self.assertRaises(HTTPError) as error:
+            self.request(path)
+        self.assertEqual(error.exception.code, 401)
+        with self.assertRaises(HTTPError) as error:
+            self.request("/api/agents/mara/observation?memory_query=" + "x" * 501, token=token)
+        self.assertEqual(error.exception.code, 400)
+
     def test_stream_sends_immediate_json_snapshot(self):
         with urlopen(self.base + "/api/stream", timeout=3) as stream:
             self.assertEqual(stream.headers["Content-Type"], "text/event-stream")

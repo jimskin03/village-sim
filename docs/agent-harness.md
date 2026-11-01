@@ -41,6 +41,14 @@ curl -s http://127.0.0.1:8000/api/agents/mara/action \
   -d '{"step":0,"place":"fire","activity":"sharing stories","mood":"hopeful"}'
 ```
 
+For a focused memory search, add a URL-encoded query to the observation URL:
+`/api/agents/mara/observation?memory_query=Tom+boat+promise`. Queries accept up to
+500 decoded characters and return at most twelve `relevant_memories` from that
+resident. Omit the query to use activity, goals and relationship context.
+Memories include `type`, `content`, absolute-minute `timestamp`, `importance`
+and supporting `source_ids`, alongside the existing event fields. Retrieval
+never removes older memories. See the [memory contract](cognition-spec.md).
+
 Replace `step: 0` and the example's place/activity with the current observation.
 Copy an entry from `allowed_actions`; providers cannot invent a new activity.
 Optional `result`, `mood`, `promise`, and `speech` must be selected from

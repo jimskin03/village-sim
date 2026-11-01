@@ -41,7 +41,8 @@ dusk spends the supplies, remembers a shortfall, and shapes tomorrow’s goals.
 Storms damage the net and close the jetty; festivals spend supplies and welcome
 a visitor to the guest cottage. Relationships keep the latest shared promise or
 grudge. At midnight, a two-sentence reflection is pinned above the compact chore
-log. The painting is graded by hour and map markers show the supplies and repairs.
+log. Original episodes and repeated chores remain in long-term memory alongside
+those summaries. The painting is graded by hour and map markers show the supplies and repairs.
 
 **Save this story** downloads replay frames and a resumable checkpoint. Open a
 story to watch it, then choose **Resume this story** to continue its simulation.
@@ -74,6 +75,13 @@ keeps advancing while the model thinks; rules handle missing or failed decisions
 Automatic calls are at least ten real seconds apart, with a thirty-second backoff
 on errors. **Think now** requests a fresh decision, including while paused.
 
+Memory retrieval combines relevance, importance and recency, so an old promise
+can surface after hundreds of chores. It works without embeddings or API calls;
+the memory module also accepts optional vectors from an embedding service.
+Existing saves migrate automatically to checkpoint version 2. The
+[cognition specification](docs/cognition-spec.md) describes this memory increment
+and the proposed hybrid planning, conversations and personal reflection stages.
+
 Keys stay in server memory and are excluded from recordings and browser storage.
 Reconnect after restarting/resetting the server. **Disconnect** keeps the
 villager's identity and memories. You can also connect an external harness using
@@ -101,6 +109,7 @@ village-sim --headless
 ## Architecture
 
 - `village_sim/world.py`: JSON world, walkable geometry, A* pathfinding.
+- `village_sim/cognition/memory.py`: persistent episodic/semantic records and retrieval.
 - `village_sim/simulation.py`: clock, personas, memory, relationships, work and events.
 - `village_sim/decisions.py`: replaceable `decide(agent, observation) -> Action`.
 - `village_sim/providers.py`: optional OpenAI-compatible model adapter.
@@ -127,6 +136,8 @@ session memory beyond 100 steps, provider changes, external action validation,
 weather and festival reactions, HTTP controls, streaming and recording. Model tests
 use a local mock HTTP provider and cover actual request formatting, independent
 models, invalid replies, slow calls, disconnect races and secret redaction.
+Memory tests cover five-day promise recall, repeated episodes, linked summaries,
+embedding fallback, checkpoint migration, absent residents and disk restart.
 
 This is a local first demo: rule-based dialogue and outcomes use bounded,
 contextual choices, and the original painting is color-graded throughout the day. The standard-library development server binds to loopback by

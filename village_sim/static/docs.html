@@ -12,6 +12,7 @@
 <pre>curl -s http://127.0.0.1:8000/api/agents/mara/observation \
   -H 'Authorization: Bearer YOUR_TOKEN'</pre>
 <p>The observation includes the resident, pantry, recent memories, promises, goals, nearby villagers and <code>suggested_action</code>. Copy one entry from <code>allowed_actions</code> for <code>place</code> and <code>activity</code>. Optional slots must come from the corresponding <code>result_options</code>, <code>mood_options</code>, <code>promise_options</code> and <code>speech_options</code>. A brief <code>thought</code> (up to 200 characters) can explain the choice. Omit optional slots to let the rules decide.</p>
+<p>For focused recall, add <code>?memory_query=Tom+boat+promise</code> to the observation URL (up to 500 decoded characters). The response includes up to twelve <code>relevant_memories</code> ranked by relevance, importance and recency. Repeated experiences and older episodes persist alongside daily summaries. Omit the query to search using the resident's activity, goals and relationships.</p>
 <h2>3. Submit</h2>
 <pre>curl -s http://127.0.0.1:8000/api/agents/mara/action \
   -H 'Content-Type: application/json' \

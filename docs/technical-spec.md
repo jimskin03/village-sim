@@ -46,7 +46,8 @@ Population ranges from 1–8. Removed residents are kept in session state and re
 their persona, relationships, work history and memory if returned. Their provider
 is detached when they leave. Reset starts a new world with the current population
 and original seed, retains speed and paused status, revokes provider tokens, clears UI model connections, and
-clears recording history. A server restart starts fresh.
+clears recording history. A server restart resumes the saved session unless
+persistence is disabled.
 
 ## Decisions and memory
 
@@ -73,11 +74,15 @@ goals remain visible for the rest of the day.
 A decision function can
 also be injected into `Simulation(decision=...)` for in-process experiments.
 
-Memories are append-only session records. Retrieval prioritizes conversations,
-reflections and completed goals, then recency, returning up to twelve records without deleting older
-ones. All memories are retained in snapshots. Conversations increase symmetric
-relationship counts with an eight-step cooldown. Reflection records a daily
-summary. Rule-based reflection uses no embeddings or model calls.
+Memories are append-only episodic/semantic records, including repeated work and
+promises. Retrieval scores query relevance, importance and recency, returning up
+to twelve detached records. Optional compatible embeddings supplement lexical
+matching; no embedding service is required or called by the simulation. Midnight
+summaries link supporting event IDs and retain original episodes. All memories
+remain in snapshots and checkpoints. Conversations record symmetric relationship
+facts with an eight-step cooldown. Reflection records a daily village summary.
+The [cognition specification](cognition-spec.md) defines memory fields, ranking,
+checkpoint migration and the proposed subsequent hybrid cognition stages.
 
 External actions are a one-step override, not a new permanent routine. They name
 a destination, describe an activity, and may contain speech. Missing, late or
@@ -173,8 +178,10 @@ speed and provider attachment alone do not add frames. A headless run produces
 exactly `steps + 1` snapshots. Recordings are immutable viewing history; import
 does not mutate the live world. The viewer validates structure and accepts files
 up to 50 MB. Since each frame includes full memory, long recordings grow faster
-than the number of steps. Session memory and recording are intentionally stored
-in RAM for this first demo.
+than the number of steps. Recording frames stay in RAM; resumable sessions
+persist atomically on disk unless persistence is disabled. Checkpoint schema 2
+includes enriched memories; schema 1 checkpoints migrate before validation.
+Replay/snapshot schema remains 1.
 
 ## UI model configuration
 

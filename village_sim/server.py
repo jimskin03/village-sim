@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Condition, Thread
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 from . import providers
 from .simulation import Simulation
@@ -363,8 +363,11 @@ class Handler(BaseHTTPRequestHandler):
                 return {"error": "Unknown villager"}, 404
             if not self.authorized(aid):
                 return {"error": "A valid agent bearer token is required"}, 401
+            query = parse_qs(urlparse(self.path).query).get("memory_query", [None])[0]
+            if query is not None and len(query) > 500:
+                return {"error": "Memory query must be at most 500 characters"}, 400
             self.session.sim.agents[aid].provider_until = self.session.sim.step + 8
-            return self.session.sim.observe(aid), 200
+            return self.session.sim.observe(aid, memory_query=query), 200
         return {"error": "Unknown endpoint"}, 404
 
     def stream(self):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, fields
+import copy
 import json
 import os
 from pathlib import Path
@@ -10,9 +11,10 @@ import random
 import tempfile
 
 from .decisions import Action
+from .cognition.memory import make_memory, validate_memory
 from .simulation import Agent, PERSONAS, Simulation
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending"}
 
 
@@ -62,9 +64,39 @@ def _json_tree(value):
 def restore_session(data: dict) -> Simulation:
     """Build a complete candidate before the caller replaces its live session."""
     try:
-        return _restore(data)
+        return _restore(_migrate(data))
     except (KeyError, TypeError, ValueError, AttributeError, IndexError, RecursionError):
         raise ValueError("That file does not contain a valid resumable village session") from None
+
+
+def _migrate(data):
+    """Upgrade v1 records without mutating the imported checkpoint."""
+    if not isinstance(data, dict) or type(data.get("schema_version")) is not int:
+        raise ValueError("Unsupported session version")
+    if data["schema_version"] != 1:
+        return data
+    data = copy.deepcopy(data)
+    seen = data["state"].pop("seen_texts")
+    if not isinstance(seen, dict) or not all(isinstance(key, str) and type(value) is bool
+                                           for key, value in seen.items()):
+        raise ValueError("Invalid legacy memory index")
+    start = data["world"]["start_minute"]
+    interval = data["world"]["minutes_per_step"]
+
+    def upgrade_event(record):
+        return {**record, "timestamp": start + record["step"] * interval,
+                "source_ids": list(record.get("source_ids", []))}
+
+    for key in ("events", "reflections"):
+        if not _events(data["state"][key]):
+            raise ValueError("Invalid legacy journal")
+        data["state"][key] = [upgrade_event(record) for record in data["state"][key]]
+    for resident in data["residents"].values():
+        if not _events(resident["memory"]):
+            raise ValueError("Invalid legacy memories")
+        resident["memory"] = [make_memory(upgrade_event(record)) for record in resident["memory"]]
+    data["schema_version"] = SCHEMA_VERSION
+    return data
 
 
 def _restore(data):
@@ -108,8 +140,6 @@ def _restore(data):
     if not all(isinstance(value, str) and key in ("fisher", "gardener", "boatwright")
                for key, value in state.get("last_miss", {}).items()):
         raise ValueError("Invalid remembered shortage")
-    if not all(type(value) is bool for value in state.get("seen_texts", {}).values()):
-        raise ValueError("Invalid memory index")
     known_ids = {persona[0] for persona in PERSONAS}
     result_ids = {"silver_fish", "mackerel", "empty_net", "torn_mesh", "first_basil",
                   "mint_bundle", "wilted_seedlings", "sealed_hull", "sound_boat",
@@ -171,6 +201,18 @@ def _restore(data):
             raise ValueError("Invalid activity")
         if not _events(record["memory"]):
             raise ValueError("Invalid memories")
+        memory_ids = set()
+        for memory in record["memory"]:
+            validate_memory(memory)
+            if (memory["id"] in memory_ids or memory["id"] >= state["next_event_id"]
+                    or memory["step"] > state["step"]
+                    or memory["timestamp"] != candidate.world.config["start_minute"]
+                        + memory["step"] * candidate.world.config["minutes_per_step"]
+                    or not set(memory["agents"]) <= set(personas)
+                    or aid not in memory["agents"]
+                    or any(source >= memory["id"] for source in memory["source_ids"])):
+                raise ValueError("Invalid memory history")
+            memory_ids.add(memory["id"])
         relationships = record["relationships"]
         if not isinstance(relationships, dict) or not all(
             partner in personas and isinstance(fact, str)

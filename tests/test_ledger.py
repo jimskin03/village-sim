@@ -44,18 +44,22 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(sim.reflections[0]['text'].count('.'), 2)
         self.assertEqual(sim.reflections[0]['reflected_day'], 1)
 
-    def test_duplicate_memory_is_rejected_but_production_is_counted(self):
+    def test_repeated_work_is_retained_alongside_its_daily_summary(self):
         sim = self.working_village()
         mara = sim.agents['mara']
         for _ in range(3):
             sim._work(mara, 'jetty', 'silver_fish')
         self.assertEqual(sim.pantry['fish'], 3)
         catches = [m for m in mara.memory if m['text'] == 'Mara caught a silver fish.']
-        self.assertEqual(len(catches), 1)
+        self.assertEqual(len(catches), 3)
+        self.assertEqual(len({memory['id'] for memory in catches}), 3)
         sim.step = 119
         sim.tick()
-        self.assertFalse(any(m['kind'] == 'work' for m in mara.memory))
+        self.assertTrue(all(memory in mara.memory for memory in catches))
         self.assertTrue(any('3 silver fish' in m['text'] for m in mara.memory if m['kind'] == 'work_summary'))
+        summary = next(m for m in mara.memory if m['kind'] == 'work_summary')
+        self.assertEqual(summary['type'], 'semantic')
+        self.assertEqual(summary['source_ids'], [memory['id'] for memory in catches])
 
     def test_storm_damage_survives_clear_weather_and_work_repairs_it(self):
         sim = self.working_village()

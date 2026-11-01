@@ -11,6 +11,7 @@ import copy
 import random
 from typing import Callable
 
+from .cognition.memory import MemoryStore
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -124,7 +125,6 @@ class Simulation:
         self.pending: dict[str, Action] = {}
         self.events: list[dict] = []
         self.next_event_id = 0
-        self.seen_texts: dict[str, bool] = {}
         self.pantry = {"fish": 0, "herbs": 0, "boat_condition": "sound",
                        "net_condition": "sound", "hearth_lit": True}
         self.suppers: list[dict] = []
@@ -152,11 +152,9 @@ class Simulation:
     def day(self):
         return self.total_minutes // 1440 + 1
 
-    def event(self, text: str, kind: str, agent_ids=()):
-        normalized = " ".join(text.casefold().split())
-        if normalized in self.seen_texts:
-            return None
-        self.seen_texts[normalized] = True
+    def event(self, text: str, kind: str, agent_ids=(), *, source_ids=(), **details):
+        # Text describes an occurrence, not its identity. Repeated catches,
+        # promises and storms must each receive their own durable event ID.
         item = {
             "id": self.next_event_id,
             "step": self.step,
@@ -165,11 +163,14 @@ class Simulation:
             "text": text,
             "kind": kind,
             "agents": list(agent_ids),
+            "timestamp": self.total_minutes,
+            "source_ids": list(source_ids),
+            **details,
         }
         self.next_event_id += 1
         self.events.append(item)
-        for aid in agent_ids:
-            self.agents[aid].memory.append(dict(item))
+        for aid in item["agents"]:
+            MemoryStore(self.residents[aid].memory).add(item)
         return item
 
     def set_population(self, count: int):
@@ -269,21 +270,22 @@ class Simulation:
                 [agent.id],
             )
 
-    def observe(self, aid: str) -> dict:
+    def observe(self, aid: str, memory_query: str | None = None) -> dict:
+        if memory_query is not None and (not isinstance(memory_query, str) or len(memory_query) > 500):
+            raise ValueError("Memory query must be text, at most 500 characters")
         agent = self.agents[aid]
         nearby = [
             other
             for other in self.agents.values()
             if other.id != aid and abs(other.x - agent.x) + abs(other.y - agent.y) <= 4
         ]
-        # Retrieval is a view, never deletion: all session memories remain stored.
-        relevant = sorted(
-            agent.memory,
-            key=lambda m: (
-                m["kind"] in ("conversation", "reflection", "goal"), m["step"]
-            ),
-            reverse=True,
-        )[:12]
+        query = memory_query if memory_query is not None else " ".join([
+            agent.activity, self.world.places[agent.destination]["name"],
+            *(goal["title"] for goal in agent.goals if not goal["completed"]),
+            *(other.name for other in nearby),
+            *agent.relationships.values(),
+        ])
+        relevant = MemoryStore(agent.memory).retrieve(query, now=self.total_minutes)
         observation = {
             "step": self.step,
             "day": self.day,
@@ -305,6 +307,7 @@ class Simulation:
                 if a.id != aid
             ],
             "relevant_memories": relevant,
+            "memory_query": query,
             "places": self.world.config["places"],
         }
         suggested = decide(agent, observation)
@@ -543,7 +546,7 @@ class Simulation:
         agent.mood = "content" if success else "worried"
         text = f"{agent.name} {detail}."
         agent.thought = agent.thought or text
-        self.event(text, "work", [agent.id])
+        self.event(text, "work", [agent.id], place=place)
         key = f"{self.day}:{agent.id}:{place}"
         summary = self.daily_work.setdefault(key, {"day": self.day, "agent": agent.id, "place": place, "results": {}})
         summary["results"][result] = summary["results"].get(result, 0) + 1
@@ -589,20 +592,21 @@ class Simulation:
         failures = sum(row["results"].get(key, 0) for row in rows for key in ("empty_net", "torn_mesh", "wilted_seedlings", "leaking_boat"))
         catches = sum(row["results"].get(key, 0) for row in rows for key in ("silver_fish", "mackerel"))
         second = f"The village landed {catches} fish and met {failures} setbacks; " + ("tomorrow’s work will answer the shortages." if supper and any(supper["missing"].values()) else "the shared table is what we will remember.")
-        item = self.event(first + " " + second, "reflection", self.agents)
+        sources = [event["id"] for event in self.events if event["day"] == day
+                   and event["kind"] in ("supper", "work", "goal")]
+        item = self.event(first + " " + second, "reflection", self.agents,
+                          source_ids=sources, reflected_day=day)
         if item:
-            item["reflected_day"] = day
             self.reflections.append(dict(item))
-        # Detailed repeated chores collapse into one factual row per worker/place.
+        # Summaries supplement episodes; reflection never erases experience.
         for row in rows:
             agent = self.residents[row["agent"]]
             counts = ", ".join(f"{count} {key.replace('_', ' ')}" for key, count in row["results"].items())
             text = f"Day {day}: {agent.name} worked at {self.world.places[row['place']]['name']}: {counts}."
-            if agent.id in self.agents:
-                self.event(text, "work_summary", [agent.id])
-        self.events = [e for e in self.events if e["day"] > day or e["kind"] not in ("work", "activity")]
-        for agent in self.residents.values():
-            agent.memory = [e for e in agent.memory if e["day"] > day or e["kind"] not in ("work", "activity")]
+            sources = [event["id"] for event in self.events if event["day"] == day
+                       and event["kind"] == "work" and agent.id in event["agents"]
+                       and event.get("place", row["place"]) == row["place"]]
+            self.event(text, "work_summary", [agent.id], source_ids=sources)
 
     def _speech_options(self, agent):
         hour = self.minute // 60
@@ -671,6 +675,8 @@ class Simulation:
             first.speech = line
             first.last_chat = other.last_chat = self.step
             first.relationships[other.id] = other.relationships[first.id] = fact
+            if fact == self._promise_sentence(first, other):
+                self.event(fact, "promise", [first.id, other.id])
             self._progress_goal(first, "social", partner=other.id)
             self._progress_goal(other, "social", partner=first.id)
 
@@ -691,6 +697,6 @@ class Simulation:
             "visitor": copy.deepcopy(self.visitor),
             "work_summaries": copy.deepcopy(list(self.daily_work.values())),
             "agents": [asdict(a) for a in self.agents.values()],
-            "events": self.events[-80:],
+            "events": copy.deepcopy(self.events[-80:]),
             "event_count": self.next_event_id,
         }

@@ -171,6 +171,11 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         k: v for k, v in agent.items() if k not in ("memory", "provider_until")
     }
     context["recent_memories"] = agent["memory"][-12:]
+    # Vectors are storage/retrieval data, not useful language-model context.
+    for key in ("recent_memories", "relevant_memories"):
+        context[key] = [{k: v for k, v in record.items()
+                         if k not in ("embedding", "embedding_model")}
+                        for record in context.get(key, [])]
     instructions = (
         "You inhabit a villager in a small fishing village. Act according to your persona, "
         "memories, relationships, daily goals, daily plan, time and nearby people. "
