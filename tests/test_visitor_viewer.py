@@ -62,7 +62,7 @@ const context = vm.createContext({
     id: 'visitor-1', name: "O'Bay-7", look: 'tide', color: '#4fb6d8',
     status: 'active', activity: 'arriving', intent: 'see the bay',
   }], ledger: [] } },
-  recording: null, world: { places: [] },
+  recording: null, operatorUnlocked: false, world: { places: [] },
   document: { querySelector: element, querySelectorAll() { return []; } },
   navigator: { clipboard: { async writeText(text) { copied.push(text); } } },
   sessionStorage: { getItem() { throw Error('Must not read credentials'); } },

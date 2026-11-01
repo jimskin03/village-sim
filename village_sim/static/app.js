@@ -11,8 +11,16 @@ const esc = (value) =>
 // Visitor words arrive wrapped in fixed delimiters; show them as quotations.
 // The text is escaped first, and visitors cannot type < or >, so only the
 // server's own delimiters become markup.
+function narrativeText(value) {
+  return String(value ?? "")
+    .replace(/^(?:I will remember this:\s*)+/, "")
+    .replace(/\bat minute (\d+)\b/g, (_, total) => {
+      const minute = Number(total) % 1440;
+      return `on day ${Math.floor(Number(total) / 1440) + 1} at ${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+    });
+}
 const storyText = (value) =>
-  esc(value)
+  esc(narrativeText(value))
     .replaceAll("&lt;&lt;visitor-speech&gt;&gt;", '<q class="visitor-quote">')
     .replaceAll("&lt;&lt;/visitor-speech&gt;&gt;", "</q>");
 const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -26,9 +34,12 @@ let recording = null,
   replayPlaying = false,
   replayTimer = null;
 let connected = false,
+  hasConnected = false,
   toastTimer,
   showLabels = false;
 let brainAgent = null;
+let operatorUnlocked = false,
+  operatorRequirement = null;
 let activePanel = null,
   panelTrigger = null;
 const color = (value) => (/^#[0-9a-f]{6}$/i.test(value) ? value : "#b6c6a2");
@@ -45,6 +56,7 @@ function openPanel(id, trigger = document.activeElement) {
     button.setAttribute("aria-expanded", String(button.dataset.panel === id));
   });
   activePanel = id;
+  document.body.classList.add("panel-open");
   panelTrigger = trigger;
   panel.querySelector("[data-panel-close]").focus({ preventScroll: true });
 }
@@ -64,6 +76,7 @@ function closePanel() {
   }
   activePanel = null;
   panelTrigger = null;
+  document.body.classList.remove("panel-open");
 }
 document.querySelectorAll("[data-panel]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -101,9 +114,12 @@ async function post(path, data, retried = false) {
   const result = await response.json();
   if (response.status === 401 && result.operator_token_required && !retried) {
     sessionStorage.removeItem("village-operator-token");
+    operatorUnlocked = false;
+    renderOperatorControls();
     const entered = window.prompt("This village is protected. Enter the operator token printed in the server console:");
     if (entered && entered.trim()) {
       sessionStorage.setItem("village-operator-token", entered.trim());
+      await checkOperator();
       return post(path, data, true);
     }
   }
@@ -120,19 +136,73 @@ async function control(action, extra = {}) {
     toast(error.message);
   }
 }
+async function checkOperator() {
+  const token = sessionStorage.getItem("village-operator-token");
+  try {
+    const response = await fetch("/api/operator", {
+      headers: token ? { "X-Operator-Token": token } : {},
+    });
+    const result = await response.json();
+    operatorUnlocked = response.ok && result.operator === true;
+    if (!operatorUnlocked && token) sessionStorage.removeItem("village-operator-token");
+    if (state && !recording) render(liveState);
+    else renderOperatorControls();
+    return result;
+  } catch {
+    operatorUnlocked = false;
+    renderOperatorControls();
+    return { error: "Could not check operator access. Try again when connected." };
+  }
+}
+function renderOperatorControls() {
+  document.querySelectorAll("[data-operator-control]").forEach((element) => {
+    element.disabled = recording ? !element.hasAttribute("data-replay-control") : !operatorUnlocked;
+    element.title = !recording && !operatorUnlocked
+      ? "Unlock operator controls with the token from the server console"
+      : element.getAttribute("aria-label") || "Operator control";
+  });
+  $("#resume-story").disabled = !operatorUnlocked || !recording?.session;
+  document.querySelectorAll(".operator-status").forEach((element) => {
+    element.textContent = operatorUnlocked
+      ? "Operator controls unlocked for this tab."
+      : "Viewing only. Village controls are locked; unlock with the operator token from the server console.";
+  });
+  document.querySelectorAll("[data-operator-unlock]").forEach((button) => {
+    button.hidden = operatorUnlocked;
+  });
+}
+document.querySelectorAll("[data-operator-unlock]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const token = window.prompt("Enter the operator token printed in the server console:");
+    if (!token?.trim()) return;
+    sessionStorage.setItem("village-operator-token", token.trim());
+    const result = await checkOperator();
+    if (!operatorUnlocked) toast(result.error || "The operator token was not accepted.");
+    else toast("Operator controls unlocked.");
+  });
+});
 function connectionLabel() {
   $(".connection").classList.toggle("offline", !connected);
   $("#connection-label").textContent = connected
     ? "World is running"
-    : "Reconnecting…";
+    : hasConnected ? "Reconnecting…" : "Connecting…";
   if (connected && liveState?.paused)
     $("#connection-label").textContent = "World is paused";
+  $("#playback-state").textContent = recording
+    ? replayPlaying ? "Replay playing" : "Replay paused"
+    : !connected ? hasConnected ? "Reconnecting…" : "Connecting…"
+    : liveState?.paused ? "Paused" : "Running";
 }
 function acceptLive(next) {
   if (liveState && next.revision < liveState.revision) return;
   if (next.persistence_error && next.persistence_error !== liveState?.persistence_error)
     toast(next.persistence_error);
   liveState = next;
+  if (operatorRequirement !== next.operator_required) {
+    operatorRequirement = next.operator_required;
+    operatorUnlocked = false;
+    checkOperator();
+  }
   $("#persistence-status").textContent = next.persistence_error
     || "The village is saved after every step. Automatic replay after a restart also needs the recording archive beside the checkpoint.";
   $("#persistence-status").classList.toggle("save-error", Boolean(next.persistence_error));
@@ -216,6 +286,7 @@ function render(next) {
   renderDetails();
   renderJournal();
   renderVisitors();
+  renderOperatorControls();
   connectionLabel();
   villageSound.follow(state);
 }
@@ -258,7 +329,7 @@ function renderStateMarkers() {
   container.innerHTML = markers.map((marker) => {
     const place = world.places.find((p) => p.id === marker.place);
     if (!place) return "";
-    return `<span class="state-marker${marker.short ? " shortage" : ""}" style="${placePosition(place)}" title="${esc(marker.note)}"><span aria-hidden="true">${marker.icon}</span> ${esc(marker.text)}${marker.short ? '<span class="sr-only"> · needs attention</span>' : ""}</span>`;
+    return `<span class="state-marker${marker.short ? " shortage" : ""}" style="${placePosition(place)}" tabindex="0" aria-label="${esc(marker.text)}. ${esc(marker.note)}" title="${esc(marker.text)}. ${esc(marker.note)}"><span aria-hidden="true">${marker.icon}</span> ${esc(marker.text)}${marker.short ? '<span class="sr-only"> · needs attention</span>' : ""}</span>`;
   }).join("");
   if (state.visitor) {
     const place = world.places.find((p) => p.id === "guest_home");
@@ -289,10 +360,13 @@ function renderSprites() {
     el.setAttribute("aria-pressed", String(a.id === selected));
     el.querySelector(".sprite-name").textContent = a.name;
     const brain = !recording && state.brains?.[a.id];
-    const brainLabel = brain?.status === "thinking" ? "thinking / rules"
-      : brain?.status === "ready" ? "model" : "rules";
+    const brainLabel = brain?.status === "thinking" ? "Thinking…"
+      : brain?.status === "ready" ? "AI connected" : state.cognition_mode === "hybrid" ? "Planning" : "Routine";
     const badge = el.querySelector(".sprite-brain");
     badge.textContent = brainLabel;
+    badge.title = brain ? "Connected AI provider" : state.cognition_mode === "hybrid"
+      ? "Planning and conversations, with local replies when no AI is connected"
+      : "Following a daily routine without an AI provider";
     badge.classList.toggle("thinking", brain?.status === "thinking");
     const speech = el.querySelector(".speech"), thought = el.querySelector(".thought");
     speech.hidden = !a.speech;
@@ -301,6 +375,7 @@ function renderSprites() {
     thought.textContent = a.thought ? `Thinking: ${a.thought}` : "";
     el.querySelector(".sprite-message").hidden = !(a.speech || a.thought);
     el.setAttribute("aria-label", `${a.name}, ${a.activity}. ${brainLabel}.${a.thought ? ` Thinking: ${a.thought}` : ""} Select villager.`);
+    el.title = `${a.name} · ${a.role}\n${a.activity}${a.mood ? ` · ${a.mood}` : ""}\n${brainLabel}${a.speech ? `\n${a.speech}` : ""}`;
     el.style.zIndex = a.speech || a.thought
       ? 20
       : a.id === selected
@@ -326,13 +401,14 @@ function renderVisitorSprites(container) {
         '<span class="sprite-shadow"></span><span class="sprite-legs"></span><span class="sprite-body"></span><span class="sprite-head"></span><span class="sprite-name"></span><span class="visitor-tag">visitor</span>';
       container.append(el);
     }
-    el.className = `sprite visitor-sprite${v.destination ? " walking" : ""}`;
+    el.className = `sprite visitor-sprite${v.activity.startsWith("walking") ? " walking" : ""}`;
     el.style.left = `${(((v.x + 0.5) * 32) / 1280) * 100}%`;
     el.style.top = `${(((v.y + 0.5) * 32) / 720) * 100}%`;
     el.style.setProperty("--agent-color", v.color);
     el.style.zIndex = 2 + Math.floor(v.y / 4);
     el.querySelector(".sprite-name").textContent = v.name;
     el.setAttribute("aria-label", `${v.name}, a visitor, ${v.activity}`);
+    el.title = `${v.name}, a visitor\n${v.activity}`;
   });
 }
 function visitorJoinPrompt() {
@@ -381,11 +457,14 @@ function renderVisitors() {
   }
   document.querySelectorAll("[data-visitor-action]").forEach((button) => {
     const action = button.dataset.visitorAction;
-    button.disabled = Boolean(recording) || (action === "enable" ? enabled : !enabled && action === "disable");
+    button.disabled = !operatorUnlocked || Boolean(recording) || (action === "enable" ? enabled : !enabled && action === "disable");
+    button.title = !operatorUnlocked ? "Unlock operator controls with the token from the server console"
+      : action === "disable" ? "Closes the village and sends every visitor away"
+      : action === "revoke_all" ? "Revoke every visitor pass" : "Allow outside agents to register";
   });
   const present = visiting.visitors.filter((v) => v.status === "active");
   $("#visitor-list").innerHTML = present.map((v) =>
-    `<div class="visitor-card" style="--agent-color:${esc(v.color)}"><span class="visitor-swatch" aria-hidden="true"></span><span class="visitor-info"><strong>${esc(v.name)}</strong> <small>visitor · ${esc(v.look)}</small><br><span>${esc(v.activity)}</span>${v.intent ? `<br><small>Says they came to: “${esc(v.intent)}”</small>` : ""}</span>${recording ? "" : `<button data-expel="${esc(v.id)}" aria-label="Ask ${esc(v.name)} to leave">Expel</button>`}</div>`,
+    `<div class="visitor-card" style="--agent-color:${esc(v.color)}"><span class="visitor-swatch" aria-hidden="true"></span><span class="visitor-info"><strong>${esc(v.name)}</strong> <small>visitor · ${esc(v.look)}</small><br><span>${esc(v.activity)}</span>${v.intent ? `<br><small>Says they came to: “${esc(v.intent)}”</small>` : ""}</span>${recording || !operatorUnlocked ? "" : `<button data-expel="${esc(v.id)}" aria-label="Ask ${esc(v.name)} to leave">Expel</button>`}</div>`,
   ).join("") || '<p class="empty-note">No visitors right now.</p>';
   $("#visitor-list").querySelectorAll("[data-expel]").forEach((button) =>
     button.addEventListener("click", () => visitorControl("expel", { visitor_id: button.dataset.expel })));
@@ -500,7 +579,7 @@ function renderRelationships(agent) {
       const sharedFact = typeof fact === "string" ? fact : `${agent.name} and ${name} have shared conversations.`;
       const trust = agent.trust?.[id];
       const trustNote = typeof trust === "number" ? ` · trust ${trust.toFixed(1)}` : "";
-      return `<button class="relationship-item" data-friend="${esc(id)}"${other ? "" : " disabled"}><span>${esc(name)}<small>${esc(sharedFact)}${trustNote}${other ? "" : " · Away from the village"}</small></span>${other ? '<span class="relationship-meta" aria-hidden="true">›</span>' : ""}</button>`;
+      return `<button class="relationship-item" data-friend="${esc(id)}"${other ? "" : " disabled"}><span>${esc(name)}<small>${storyText(sharedFact)}${trustNote}${other ? "" : " · Away from the village"}</small></span>${other ? '<span class="relationship-meta" aria-hidden="true">›</span>' : ""}</button>`;
     })
     .join("")}</div>`;
 }
@@ -596,7 +675,7 @@ function renderBrain(agent) {
       ? `${agent.provider} · external harness`
       : "Rule-based routines";
   $("#llm-open").textContent = brain ? "LLM settings" : "Connect a brain";
-  $("#llm-open").disabled = Boolean(recording);
+  $("#llm-open").disabled = Boolean(recording) || !operatorUnlocked;
   if ($("#llm-settings").open && brainAgent) updateBrainFeedback();
 }
 function updateBrainFeedback() {
@@ -718,19 +797,29 @@ $("#llm-think").addEventListener("click", async () => {
     toast(error.message);
   }
 });
+function journalEntries(events) {
+  const seen = new Set();
+  return [...events].reverse().filter((event) => {
+    if (!["insight", "promise"].includes(event.kind)) return true;
+    const key = `${event.day}:${narrativeText(event.text)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 function renderJournal() {
   const journal = $("#journal"), scroll = journal.scrollTop;
   const choresOpen = Boolean(journal.querySelector(".chore-log[open]"));
   const supperOpen = Boolean($("#supper-ledger details[open]"));
   const reflections = state.reflections || state.events.filter((e) => e.kind === "reflection");
   $("#reflections").innerHTML = [...reflections].reverse().map((e) =>
-    `<article class="pinned-reflection"><small>✧ MIDNIGHT · DAY ${esc(e.reflected_day ?? e.day)}</small><p>${esc(e.text)}</p></article>`,
+    `<article class="pinned-reflection"><small>✧ MIDNIGHT · DAY ${esc(e.reflected_day ?? e.day)}</small><p>${storyText(e.text)}</p></article>`,
   ).join("") || '<p class="empty-note">At midnight, the village keeps one line from today.</p>';
   const lastSupper = state.suppers?.at(-1);
   $("#supper-ledger").innerHTML = lastSupper
     ? `<details class="supper-history"${supperOpen ? " open" : ""}><summary>Supper ledger · Day ${esc(lastSupper.day)}</summary>${[...state.suppers].reverse().map((supper) => `<p>${esc(supper.text || supper.summary || `Day ${supper.day}: ${supper.fish ?? supper.fish_spent ?? 0} fish, ${supper.herbs ?? supper.herbs_spent ?? 0} herbs`)}</p>`).join("")}</details>`
     : "";
-  const visible = [...state.events].reverse().filter((e) => e.kind !== "reflection");
+  const visible = journalEntries(state.events).filter((e) => e.kind !== "reflection");
   const chores = visible.filter((e) => e.kind === "work" || e.kind === "work_summary");
   const entries = visible.filter((e) => e.kind !== "work" && e.kind !== "work_summary").slice(0, 35);
   const eventHTML = (e) => `<div class="journal-entry ${e.kind === "conversation" ? "conversation" : ""}"><time title="Day ${esc(e.day)}">${esc(e.time)}</time><p>${storyText(e.text)}</p></div>`;
@@ -830,45 +919,41 @@ $("#labels").addEventListener("click", () => {
 });
 const mapViewport = $("#scene-viewport"),
   mapCanvas = $("#scene-inner");
-let mapOverview = false,
-  mapZoom = false,
+let mapOverview = true,
+  mapZoom = 1,
   mapDrag = null;
 function resizeMap() {
   const width = mapViewport.clientWidth,
     height = mapViewport.clientHeight;
-  const enlargedWidth = Math.max(
-    window.innerWidth > 820 ? 2048 : 1344,
-    width,
-    height * 16 / 9,
-  );
-  const canvasWidth = mapOverview
-    ? Math.min(width, height * 16 / 9)
-    : enlargedWidth * (mapZoom ? 1.4 : 1);
+  const oldWidth = mapCanvas.clientWidth || width;
+  const centerX = mapOverview || oldWidth <= width ? 0.5 : (mapViewport.scrollLeft + width / 2) / oldWidth;
+  const centerY = mapOverview || oldWidth * 9 / 16 <= height ? 0.5 : (mapViewport.scrollTop + height / 2) / (oldWidth * 9 / 16);
+  const canvasWidth = Math.max(1, Math.min(width, height * 16 / 9)) * mapZoom;
   mapCanvas.style.setProperty("--map-width", `${canvasWidth}px`);
   mapViewport.classList.toggle("overview", mapOverview);
   $("#overview").setAttribute("aria-pressed", String(mapOverview));
   $("#map-hint").textContent = mapOverview
     ? "Whole village · Zoom to explore"
     : "Drag or scroll to explore";
-  $("#zoom").setAttribute("aria-pressed", String(mapZoom));
-  $("#zoom").setAttribute(
-    "aria-label",
-    mapZoom ? "Zoom out one level" : "Zoom into the village",
-  );
-  $("#zoom").title = mapZoom ? "Zoom out one level" : "Zoom into the village";
-  $("#zoom").textContent = mapZoom ? "−" : "＋";
-  // Keep the village centered when changing views or resizing the browser.
-  mapViewport.scrollLeft = (canvasWidth - width) / 2;
-  mapViewport.scrollTop = (canvasWidth * 9 / 16 - height) * 0.55;
+  $("#zoom").disabled = mapZoom >= 3;
+  $("#zoom-out").disabled = mapOverview;
+  $("#map-scale").textContent = `${Math.round(mapZoom * 100)}%`;
+  mapViewport.scrollLeft = centerX * canvasWidth - width / 2;
+  mapViewport.scrollTop = centerY * canvasWidth * 9 / 16 - height / 2;
 }
 $("#overview").addEventListener("click", () => {
-  mapOverview = !mapOverview;
-  mapZoom = false;
+  mapOverview = true;
+  mapZoom = 1;
   resizeMap();
 });
 $("#zoom").addEventListener("click", () => {
-  mapZoom = mapOverview ? false : !mapZoom;
-  mapOverview = false;
+  mapZoom = Math.min(3, mapZoom + 0.5);
+  mapOverview = mapZoom === 1;
+  resizeMap();
+});
+$("#zoom-out").addEventListener("click", () => {
+  mapZoom = Math.max(1, mapZoom - 0.5);
+  mapOverview = mapZoom === 1;
   resizeMap();
 });
 mapViewport.addEventListener("pointerdown", (event) => {
@@ -1146,6 +1231,7 @@ $("#return-live").addEventListener("click", async () => {
   clearInterval(replayTimer);
   replayPlaying = false;
   recording = null;
+  renderOperatorControls();
   $("#replay-bar").hidden = true;
   $("#play").focus({ preventScroll: true });
   try {
@@ -1219,6 +1305,7 @@ async function start() {
     const stream = new EventSource("/api/stream");
     stream.onopen = () => {
       connected = true;
+      hasConnected = true;
       connectionLabel();
     };
     stream.onmessage = (event) => {

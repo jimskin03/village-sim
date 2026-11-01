@@ -11,6 +11,7 @@ while newer evidence still supports that person.
 from __future__ import annotations
 
 import copy
+import re
 
 CONTRACT = "reflection-v1"
 HOUR = 4
@@ -39,7 +40,9 @@ def _blocked(sim, agent):
 
 def _pending(sim, aid):
     agent = sim.residents[aid]
-    return [memory for memory in agent.memory if memory["id"] >= agent.reflection_cursor]
+    # An interpretation is not a new experience to reflect on again.
+    return [memory for memory in agent.memory
+            if memory["id"] >= agent.reflection_cursor and memory["kind"] != "insight"]
 
 
 def due(sim, aid):
@@ -244,7 +247,7 @@ def apply_turn(sim, aid, data):
 
 def _summary(evidence):
     record = max(evidence, key=lambda memory: (memory["importance"], memory["id"]))
-    text = f"I will remember this: {record['text']}".strip()
+    text = re.sub(r"^(?:I will remember this:\s*)+", "", record["text"]).strip()
     return {
         "text": text[:240].strip() or "I will remember what I just experienced.",
         "source_ids": [record["id"]],

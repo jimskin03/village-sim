@@ -255,6 +255,11 @@ remain stages 5–6.
 
 ### Personal reflection and trust (stage 4, implemented)
 
+New insights do not count as fresh evidence for another reflection. Local
+summaries retain their episode citations and avoid adding a repeated “I will
+remember this” prefix. The journal folds repeated agreement summaries for the
+same day, while the memory archive and replay data keep all original records.
+
 In Hybrid mode, each resident accumulates importance since their last personal
 reflection. It triggers at 5.0, or at day's end when new evidence exists, and at
 most once per resident per simulated hour. The resident may submit up to three

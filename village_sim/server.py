@@ -608,6 +608,13 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def read_api(self, path):
+        if path == "/api/operator":
+            # A read-only capability check, using the same rules as writes.
+            if not self.local_control_allowed():
+                return {"operator": False, "error": "Operator controls require the local viewer or a local port forward."}, 403
+            if not self.session.operator_ok(self.headers.get(OPERATOR_HEADER)):
+                return {"operator": False, "error": "Enter the operator token from the server console."}, 401
+            return {"operator": True}, 200
         if path == "/api/state":
             return self.session.state(), 200
         if path == "/api/world":
@@ -849,8 +856,8 @@ class Handler(BaseHTTPRequestHandler):
                 session.schedule_brains()
             elif action == "speed":
                 interval = data.get("interval")
-                if type(interval) not in (float, int) or interval not in (0.5, 1, 2, 4):
-                    raise ValueError("Interval must be 0.5, 1, 2 or 4 seconds")
+                if type(interval) not in (float, int) or interval not in (0.5, 1, 2, 4, 8):
+                    raise ValueError("Interval must be 0.5, 1, 2, 4 or 8 seconds")
                 session.interval = interval
             elif action == "population":
                 sim.set_population(data.get("count"))

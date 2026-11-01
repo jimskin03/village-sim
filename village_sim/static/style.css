@@ -156,13 +156,14 @@ main {
 }
 .scene-viewport {
   position: absolute;
-  inset: 0;
+  inset: 150px 20px 120px;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   scrollbar-color: #c3ad7770 #173b4840;
   cursor: grab;
 }
+.scene-viewport::-webkit-scrollbar { display: none; }
 .scene-viewport.dragging {
   cursor: grabbing;
   user-select: none;
@@ -178,7 +179,7 @@ main {
 }
 .scene-inner {
   position: relative;
-  width: var(--map-width, 2048px);
+  width: var(--map-width, 100%);
   height: auto;
   aspect-ratio: 16/9;
   flex: none;
@@ -428,6 +429,7 @@ main {
   right: 20px;
   display: flex;
   gap: 7px;
+  align-items: center;
   z-index: 5;
 }
 .scene-tools button {
@@ -520,7 +522,7 @@ main {
   top: 104px;
   right: 20px;
   bottom: 100px;
-  width: 408px;
+  width: min(360px, 44vw);
   max-width: calc(100vw - 40px);
   display: flex;
   flex-direction: column;
@@ -999,15 +1001,15 @@ main {
 }
 .sprite {
   position: absolute;
-  transform: translate(-50%, -100%);
+  transform: translate(-50%, -100%) scale(1.15);
   width: 32px;
   height: 44px;
-  transition:
-    left 1.2s linear,
-    top 1.2s linear;
   z-index: 2;
   padding: 0;
   filter: drop-shadow(0 2px 1px #091f26aa);
+}
+.sprite.walking {
+  transition: left 1.2s linear, top 1.2s linear;
 }
 .sprite-body {
   position: absolute;
@@ -1058,10 +1060,13 @@ main {
   color: #f9eccb;
   background: #142e30d9;
   padding: 3px 6px;
-  font-size: 8px;
+  font-size: 12px;
   border: 1px solid #7d938144;
   border-radius: 3px;
   white-space: nowrap;
+  max-width: clamp(60px, 10vw, 130px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sprite.selected .sprite-name {
   border-color: #e8c37e;
@@ -1983,3 +1988,54 @@ body:has(#replay-bar:not([hidden])) .toast {
 .survival-stat meter { width: 100%; height: 8px; accent-color: #91c7ab; }
 .survival-stat.low { color: #973f26; }
 .sprite.collapsed .sprite-body, .sprite.collapsed .sprite-head, .sprite.collapsed .sprite-legs { transform: rotate(75deg); }
+
+/* Keep the map inside its own space at every browser zoom and drawer size. */
+#playback-state {
+  display: block;
+  margin-top: 3px;
+  color: #f5dfac;
+  font-size: 11px;
+}
+.playback #sound {
+  display: flex;
+  width: auto;
+  gap: 5px;
+  padding-inline: 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+#map-scale { font-size: 12px; color: #f1e6cf; }
+.scene-tools { top: 104px; bottom: auto; }
+.state-marker { pointer-events: auto; }
+.sprite-brain { font-size: 10px; top: 48px; }
+.visitor-tag { font-size: 10px; }
+.panel-body { overflow-wrap: anywhere; }
+.operator-status { line-height: 1.5; }
+body.panel-open .scene-caption,
+body.panel-open .scene-footer { display: none; }
+body:has(#replay-bar:not([hidden])) .scene-viewport { bottom: 190px; }
+@media (min-width: 701px) {
+  body.panel-open .scene-viewport { right: calc(min(360px, 44vw) + 36px); }
+  body.panel-open .scene-tools { right: calc(min(360px, 44vw) + 36px); }
+  .map-panel { width: min(360px, 44vw); }
+}
+@media (max-width: 700px) {
+  .playback { top: 96px; }
+  .map-navigation { top: 142px; }
+  .scene-tools { top: 142px; left: auto; right: 12px; }
+  .scene-tools button { width: 32px; height: 36px; }
+  .map-navigation button { min-height: 36px; }
+  .scene-viewport { inset: 188px 12px 150px; }
+  .map-panel { top: 48%; bottom: 88px; }
+  body.panel-open .scene-viewport { bottom: calc(52dvh + 12px); }
+  body:has(#replay-bar:not([hidden])) .scene-viewport { bottom: 240px; }
+  body.panel-open:has(#replay-bar:not([hidden])) .scene-viewport { bottom: calc(52dvh + 12px); }
+  .overview .state-marker:not(:hover):not(:focus) { font-size: 0; padding: 3px; border-radius: 50%; }
+  .overview .state-marker > span[aria-hidden] { font-size: 12px; }
+  .overview .state-marker.shortage::before { font-size: 10px; margin-right: 2px; }
+  .place-label { max-width: 70px; white-space: normal; text-align: center; }
+}
+@media (max-height: 500px) and (min-width: 701px) {
+  .scene-viewport { top: 128px; bottom: 90px; }
+  .scene-tools { top: 82px; bottom: auto; }
+}

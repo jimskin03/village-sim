@@ -144,15 +144,29 @@ def finish(sim, conversation, status, reason):
 
 
 def available(sim, conversation):
+    return unavailable_reason(sim, conversation) is None
+
+
+def unavailable_reason(sim, conversation):
     people = conversation["participants"]
-    if sim.cognition_mode != "hybrid" or sim.weather == "storm" or sim.step < sim.festival_until:
-        return False
-    if any(aid not in sim.agents for aid in people) or not 6 <= sim.minute // 60 < 23:
-        return False
+    if sim.cognition_mode != "hybrid":
+        return "returning to daily routines"
+    if sim.weather == "storm":
+        return "sheltering from the storm"
+    if sim.step < sim.festival_until:
+        return "joining the festival"
+    if any(aid not in sim.agents for aid in people):
+        return "someone has left the village"
+    if not 6 <= sim.minute // 60 < 23:
+        return "time to sleep"
     first, other = (sim.agents[aid] for aid in people)
-    if any(survival.collapsed(a) or survival.personal_action(a, sim.survival_observation()) for a in (first, other)):
-        return False
-    return abs(first.x - other.x) + abs(first.y - other.y) <= 2
+    if any(survival.collapsed(a) for a in (first, other)):
+        return "someone needs to recover"
+    if any(survival.personal_action(a, sim.survival_observation()) for a in (first, other)):
+        return "taking a break for food or water"
+    if abs(first.x - other.x) + abs(first.y - other.y) > 2:
+        return "the villagers moved apart"
+    return None
 
 
 def apply_turn(sim, aid, data):
@@ -179,7 +193,10 @@ def apply_turn(sim, aid, data):
                       "together": False, "reason": None}
         sim.commitments.append(commitment)
         names = " and ".join(sim.residents[p].name for p in terms["participants"])
-        fact = f"{names} agreed to {terms['task'].replace('_', ' ')} at {terms['place']} at minute {terms['start_minute']} for {terms['duration_minutes']} minutes."
+        day, minute = divmod(terms["start_minute"], 1440)
+        when = f"day {day + 1} at {minute // 60:02}:{minute % 60:02}"
+        place = sim.world.places[terms["place"]]["name"]
+        fact = f"{names} agreed to {terms['task'].replace('_', ' ')} at {place} on {when} for {terms['duration_minutes']} minutes."
         sim.event(fact, "promise", terms["participants"], source_ids=[t["memory_id"] for t in conversation["transcript"]],
                   task=terms["task"])
         first, second = terms["participants"]
@@ -233,7 +250,17 @@ def fallback(sim, aid):
     if request is None:
         return
     conversation = request["conversation"]
-    move, terms, speech = "say", None, "I am glad we have time to talk."
+    agent = sim.agents[aid]
+    partner = next(sim.agents[p] for p in conversation["participants"] if p != aid)
+    craft = {"fisher": "the next catch", "gardener": "the herb garden", "boatwright": "the village boats"}[agent.role]
+    lines = (
+        f"How has your day been, {partner.name}? I have been thinking about {craft}.",
+        f"A quiet moment together helps me make sense of the day, {partner.name}.",
+        f"Before I return to {craft}, tell me what is on your mind, {partner.name}.",
+        f"The village has been busy. Shall we compare our plans, {partner.name}?",
+    )
+    index = (sim.step // 8 + list(sim.residents).index(aid) + len(conversation["transcript"])) % len(lines)
+    move, terms, speech = "say", None, lines[index]
     if conversation["offer"] and conversation["offered_by"] != aid:
         try:
             checked = validate_terms(sim, conversation, conversation["offer"])
@@ -242,18 +269,22 @@ def fallback(sim, aid):
         else:
             choice = acceptance(sim, aid, checked)
             if choice == "accept":
-                move, terms, speech = "accept", checked, "Yes, I can make that time. I will meet you there."
+                minute = checked["start_minute"] % 1440
+                move, terms, speech = "accept", checked, f"Yes, {partner.name}. I will meet you at {minute // 60:02}:{minute % 60:02}."
             elif choice == "decline":
                 move, terms, speech = "decline", None, "I would rather not agree to that. I need a more reliable plan."
             else:
-                move, terms, speech = "say", None, "I need to think about that before I agree."
+                replies = (f"I need to think about that before I agree, {partner.name}.",
+                           f"I still have work around {craft}. Can we leave that open, {partner.name}?",
+                           f"Let me check the rest of my day first, {partner.name}.")
+                move, terms, speech = "say", None, replies[len(conversation["transcript"]) % len(replies)]
     elif not conversation["transcript"]:
         start = request["earliest_start"] + 30
         terms = {"participants": conversation["participants"], "place": "bench", "task": "talk",
                  "start_minute": start, "duration_minutes": 30}
         try:
             validate_terms(sim, conversation, terms)
-            move, speech = "propose", "Would you like to meet at the bench for a quiet talk?"
+            move, speech = "propose", f"Would you like to meet at the flower bench for a quiet talk, {partner.name}?"
         except ValueError:
             terms = None
     apply_turn(sim, aid, {"contract": CONTRACT, "conversation_id": request["conversation_id"],
@@ -264,8 +295,9 @@ def update(sim, *, advance=True):
     for conversation in sim.conversations:
         if conversation["status"] != "active":
             continue
-        if not available(sim, conversation):
-            finish(sim, conversation, "interrupted", "participants unavailable")
+        reason = unavailable_reason(sim, conversation)
+        if reason:
+            finish(sim, conversation, "interrupted", reason)
         elif sim.step - conversation["created_step"] >= 8:
             finish(sim, conversation, "expired", "conversation timed out")
         elif any(meeting_action(sim, aid) for aid in conversation["participants"]):

@@ -782,7 +782,11 @@ class Simulation:
         fact = facts[-1]["text"]
         craft = {"fisher": "nets", "gardener": "herbs", "boatwright": "boats"}[agent.role]
         period = "morning" if hour < 12 else "afternoon" if hour < 18 else "evening"
-        return [f"This {period}, with the {craft} on my mind, I remember: {fact}"]
+        return [
+            f"This {period}, with the {craft} on my mind, I remember: {fact}",
+            f"I was thinking about the {craft} this {period}. {fact}",
+            f"Before I return to the {craft}, there is something from this {period}: {fact}",
+        ]
 
     def _promise_sentence(self, agent, other):
         task = {
@@ -837,7 +841,7 @@ class Simulation:
                 fact = f"{first.name} and {other.name} shared supper on day {self.day}."
             else:
                 fact = self._promise_sentence(first, other)
-            line = lines[0]
+            line = lines[(self.step // 8 + villagers.index(first)) % len(lines)]
             event = self.event(f"{first.name} to {other.name}: “{line}”", "conversation", [first.id, other.id])
             if not event:
                 continue

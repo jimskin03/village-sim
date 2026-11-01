@@ -99,11 +99,13 @@
               <time id="clock-time">18:00</time
               ><span id="weather-text">Clear skies</span>
             </div>
+            <span id="playback-state" role="status">Connecting…</span>
           </div>
         </div>
         <div class="playback">
           <button
             id="play"
+            data-operator-control data-replay-control disabled
             class="icon-button"
             title="Pause simulation"
             aria-label="Pause simulation"
@@ -112,6 +114,7 @@
           </button>
           <button
             id="step"
+            data-operator-control data-replay-control disabled
             class="icon-button"
             title="Advance 15 minutes"
             aria-label="Advance one step"
@@ -121,7 +124,8 @@
           <span class="divider"></span>
           <label class="speed-label"
             ><span class="sr-only">Simulation speed</span
-            ><select id="speed">
+            ><select id="speed" data-operator-control disabled>
+              <option value="8">¼× speed</option>
               <option value="4">½× speed</option>
               <option value="2" selected>1× speed</option>
               <option value="1">2× speed</option>
@@ -145,6 +149,7 @@
             aria-label="Play village sounds"
           >
             <svg><use href="#i-muted" /></svg>
+            <span>Sound off</span>
           </button>
         </div>
       </div>
@@ -178,7 +183,7 @@
           <span id="map-hint">Drag or scroll to explore</span>
           <button
             id="overview"
-            aria-pressed="false"
+            aria-pressed="true"
             title="Fit the whole village in view"
           >
             Overview
@@ -189,6 +194,8 @@
           ><span id="scene-caption">Lanterns on. The world carries on.</span>
         </div>
         <div class="scene-tools">
+          <button id="zoom-out" aria-label="Zoom out" title="Zoom out" disabled>−</button>
+          <span id="map-scale" aria-live="polite">100%</span>
           <button
             id="labels"
             aria-label="Show place labels"
@@ -199,8 +206,7 @@
           ><button
             id="zoom"
             aria-label="Zoom into the village"
-            aria-pressed="false"
-            title="Toggle zoom"
+            title="Zoom into the village"
           >
             ＋
           </button>
@@ -251,7 +257,7 @@
                 <span class="detail-label">VILLAGER BRAIN</span>
                 <p id="brain-status">Rule-based routines</p>
               </div>
-              <button id="llm-open" class="secondary-button">
+              <button id="llm-open" class="secondary-button" data-operator-control disabled>
                 Connect a brain
               </button>
             </div>
@@ -331,10 +337,12 @@
           <p id="visitor-join-note" class="empty-note" role="status">Open the village to visitors to copy a join prompt.</p>
           <textarea id="visitor-join-prompt" aria-label="Join prompt to copy manually" rows="10" readonly hidden></textarea>
           <div class="visitor-controls">
-            <button data-visitor-action="enable">Welcome visitors</button
-            ><button data-visitor-action="disable" title="Kill switch: closes the village and sends every visitor away">Close to visitors</button
-            ><button data-visitor-action="revoke_all">Revoke all passes</button>
+            <button data-visitor-action="enable" disabled>Welcome visitors</button
+            ><button data-visitor-action="disable" disabled title="Kill switch: closes the village and sends every visitor away">Close to visitors</button
+            ><button data-visitor-action="revoke_all" disabled>Revoke all passes</button>
           </div>
+          <p class="operator-status empty-note">Village controls are locked.</p>
+          <button data-operator-unlock class="secondary-button">Unlock operator controls</button>
           <h3 class="visitor-heading">In the village</h3>
           <div id="visitor-list"></div>
           <h3 class="visitor-heading">Visitor ledger</h3>
@@ -371,11 +379,12 @@
               </div>
             </div>
             <div class="event-buttons">
-              <button data-event="storm"><span>☂</span> A passing storm</button
-              ><button data-event="festival">
+              <button data-event="storm" data-operator-control disabled><span>☂</span> A passing storm</button
+              ><button data-event="festival" data-operator-control disabled>
                 <span>✧</span> Lantern festival</button
               ><button
                 data-event="clear"
+                data-operator-control disabled
                 title="End the current storm or festival"
               >
                 <span>≈</span> Quiet evening
@@ -439,9 +448,11 @@
         </div>
       </form>
       <p>A few small adjustments to your little world.</p>
+      <p class="operator-status setting-note">Village controls are locked.</p>
+      <button data-operator-unlock class="secondary-button">Unlock operator controls</button>
       <label class="setting-row"
         >Villagers
-        <select id="population">
+        <select id="population" data-operator-control disabled>
           <option>1</option>
           <option>2</option>
           <option selected>3</option>
@@ -459,7 +470,7 @@
         portable copy.
       </p>
       <label class="setting-row">Thinking style
-        <select id="cognition-mode">
+        <select id="cognition-mode" data-operator-control disabled>
           <option value="rules">Rules · daily routines</option>
           <option value="hybrid">Hybrid · plans and conversations</option>
         </select>
@@ -485,7 +496,7 @@
           <strong>A fresh beginning</strong
           ><small>Restarts the clock and clears this session.</small>
         </div>
-        <button id="reset" class="secondary-button">Start again</button>
+        <button id="reset" class="secondary-button" data-operator-control disabled>Start again</button>
       </div>
     </dialog>
     <dialog id="llm-settings">
