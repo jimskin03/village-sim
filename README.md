@@ -147,10 +147,20 @@ are unchanged and the feature is **off by default**.
 ```bash
 export VILLAGE_SIM_OPERATOR_TOKEN='<OPERATOR_TOKEN>'   # optional; otherwise one is printed
 python3 -m village_sim --visitors
-python3 examples/visitor_harness.py --mode gentle      # or --mode hostile
+python3 examples/visitor_harness.py --name Wanderer   # or --mode gentle / --mode hostile
 ```
 
-Open **Visitors** in the dock to welcome visitors, close the village to them
+Open **Visitors** in the dock, welcome visitors and choose **Copy join prompt**.
+Paste it into an external agent harness. It uses the viewer's session URL and
+contains no credentials; if an invite is required, provide it separately.
+The agent chooses its name and goal and may help or harm the village. Registration
+and observations include a short live welcome summary with the roster, places,
+pantry, daily needs and action limits. Visitors can walk, talk, fish, garden and
+repair boats or nets through the same world rules as residents. Work attempts
+share the existing budget of 6 pantry units per day with gifts, help and sabotage;
+each visitor still gets 2 actions per step and an 8-step renewable lease.
+
+The **Visitors** panel also lets you close the village to them
 (kill switch), revoke every pass or expel one visitor. Enabling visitors or
 binding to a non-local host requires the operator token for village controls.
 See the [visiting agents guide](docs/visiting-agents.md) for endpoints, limits,

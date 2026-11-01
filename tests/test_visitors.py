@@ -1,10 +1,14 @@
+import copy
 import json
 import os
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -72,6 +76,144 @@ class VisitorRuleTests(unittest.TestCase):
         self.sim.tick()
         with self.assertRaises(visitors.RateLimited):
             visitors.register(self.sim, {"name": "One more"})
+
+    def test_chosen_name_contract_and_legacy_names(self):
+        for name in ("Dotted.Name", "A\n", "A\tB", " ", "x" * 25, "A_visitor", "<b>Hi</b>"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Name must"):
+                visitors.register(self.sim, {"name": name})
+        chosen = "'Ash-7 O'Bay"
+        visitor = visitors.register(self.sim, {"name": chosen})
+        self.assertEqual(visitor["name"], chosen)
+        for duplicate in (chosen.lower(), "mARA"):
+            with self.assertRaisesRegex(ValueError, "already used"):
+                visitors.register(self.sim, {"name": duplicate})
+        restored = restore_session(export_session(self.sim))
+        self.assertEqual(restored.visiting["visitors"][visitor["id"]]["name"], chosen)
+        # Old checkpoints remain resumable even though new names disallow dots.
+        visitor["name"] = "Older.Name"
+        restored = restore_session(export_session(self.sim))
+        self.assertEqual(restored.visiting["visitors"][visitor["id"]]["name"], "Older.Name")
+
+    def test_welcome_uses_live_roster_clock_pantry_and_limits(self):
+        self.sim.set_population(6)
+        summary = visitors.welcome(self.sim)
+        self.assertEqual(summary["villagers"], {a.name: a.role for a in self.sim.agents.values()})
+        self.assertEqual(summary["clock"], {"minutes_per_step": 15, "steps_per_day": 96,
+                                             "day": self.sim.day, "step": self.sim.step})
+        self.assertEqual(summary["pantry"], self.sim.pantry)
+        self.assertEqual(summary["daily_need"], {"supper": {"fish": 6, "herbs": 2},
+                                                "food_points": 288, "water_units": 15})
+        self.assertEqual(set(summary["places"]), set(self.sim.world.places))
+        self.assertIn("repair_boat", summary["places"]["shore"])
+        self.assertEqual(set(summary["actions"]), set(visitors.KINDS))
+        self.assertEqual(summary["limits"]["actions_per_step"], visitors.ACTIONS_PER_STEP)
+        self.assertEqual(summary["limits"]["pantry_units_per_day"], visitors.PANTRY_UNITS_PER_DAY)
+        self.assertEqual(summary["limits"]["lease_steps"], visitors.LEASE_STEPS)
+        self.assertEqual(summary, visitors.observe(self.sim, self.vid)["welcome"])
+        self.assertLessEqual(len(json.dumps(summary)), 1500)
+        self.sim.set_population(8)
+        self.sim.pantry["fish"] = 12
+        self.sim.tick()
+        refreshed = visitors.observe(self.sim, self.vid)["welcome"]
+        self.assertEqual(len(refreshed["villagers"]), 8)
+        self.assertEqual(refreshed["clock"]["step"], self.sim.step)
+        self.assertEqual(refreshed["pantry"]["fish"], self.sim.pantry["fish"])
+        self.assertLessEqual(len(json.dumps(refreshed)), 1550)
+        refreshed["pantry"]["fish"] = -1
+        self.assertNotEqual(self.sim.pantry["fish"], -1)
+
+    def test_work_at_each_place_uses_world_outcomes_and_visitor_attribution(self):
+        cases = (("fish", "jetty", "silver_fish", "fish", 1),
+                 ("fish", "shore", "mackerel", "fish", 1),
+                 ("garden", "garden", "mint_bundle", "herbs", 1),
+                 ("mend_net", "nets", "mended_mesh", "net_condition", "sound"),
+                 ("repair_boat", "shore", "sealed_hull", "boat_condition", "sound"))
+        for task, place, result, resource, value in cases:
+            with self.subTest(task=task, place=place):
+                self.sim.step += 1
+                stand(self.sim, self.v, place)
+                self.sim.pantry.update(fish=0, herbs=0, net_condition="sound", boat_condition="leaking")
+                if task == "mend_net":
+                    self.sim.pantry["net_condition"] = "torn"
+                before = copy.deepcopy(self.sim.agents)
+                work = next(a for a in visitors.allowed_actions(self.sim, self.v) if a["kind"] == "work")
+                self.assertIn(task, work["task"])
+                with patch.object(self.sim.rng, "choice", return_value=result) as choose:
+                    reply = self.act(kind="work", task=task)
+                self.assertIn(result, choose.call_args.args[0])
+                self.assertEqual(reply["result"], result)
+                self.assertTrue(reply["success"])
+                self.assertEqual(self.sim.pantry[resource], value)
+                event = next(e for e in self.sim.events if e["id"] == reply["event_id"])
+                self.assertEqual(event["visitor"], self.vid)
+                self.assertEqual(event["agents"], [])
+                self.assertEqual(event["provenance"], {"visitor": self.vid, "step": self.sim.step, "kind": "work"})
+                self.assertIn(self.v["name"], event["text"])
+                self.assertEqual(self.sim.visiting["ledger"][-1]["target"], place)
+                self.assertEqual(self.sim.agents, before)
+        self.assertEqual(self.v["units"]["used"], len(cases))
+        restored = restore_session(export_session(self.sim))
+        self.assertEqual(restored.visiting, self.sim.visiting)
+
+    def test_work_rejects_invalid_places_times_weather_and_requested_results(self):
+        stand(self.sim, self.v, "guest_home")
+        with self.assertRaisesRegex(ValueError, "Stand at"):
+            self.act(kind="work", task="fish")
+        stand(self.sim, self.v, "garden")
+        for data in ({"task": "fly"}, {"task": "garden", "result": "mint_bundle"}):
+            with self.assertRaises(ValueError):
+                self.act(kind="work", **data)
+        for hour, weather, festival in ((5, "clear", False), (18, "clear", False),
+                                         (8, "storm", False), (8, "clear", True)):
+            with self.subTest(hour=hour, weather=weather, festival=festival):
+                self.sim.step = (hour * 60 - self.sim.world.config["start_minute"]) // 15 + 96
+                self.sim.weather = weather
+                self.sim.festival_until = self.sim.step + 8 if festival else 0
+                before = dict(self.sim.pantry)
+                rng = self.sim.rng.getstate()
+                self.assertNotIn("work", [a["kind"] for a in visitors.allowed_actions(self.sim, self.v)])
+                with self.assertRaises(ValueError):
+                    self.act(kind="work", task="garden")
+                self.assertEqual(self.sim.pantry, before)
+                self.assertEqual(self.sim.rng.getstate(), rng)
+                self.assertEqual(self.v["units"]["used"], 0)
+
+    def test_torn_net_work_has_same_setback_and_spends_a_unit(self):
+        stand(self.sim, self.v, "jetty")
+        self.sim.pantry["net_condition"] = "torn"
+        fish = self.sim.pantry["fish"]
+        reply = self.act(kind="work", task="fish")
+        self.assertEqual(reply["result"], "torn_mesh")
+        self.assertFalse(reply["success"])
+        self.assertEqual(self.sim.pantry["fish"], fish)
+        self.assertEqual(self.v["units"]["used"], 1)
+
+    def test_work_shares_action_and_pantry_limits_with_all_other_effects(self):
+        stand(self.sim, self.v, "nets")
+        self.act(kind="work", task="mend_net")
+        self.act(kind="sabotage", effect="fray_net")
+        with self.assertRaises(visitors.RateLimited):
+            self.act(kind="work", task="mend_net")
+        self.sim.step += 1
+        self.act(kind="help", task="mend_net")
+        stand(self.sim, self.v, "garden")
+        self.act(kind="gift", resource="herbs", amount=2)
+        self.sim.step += 1
+        self.act(kind="work", task="garden")
+        self.assertEqual(self.v["units"]["used"], visitors.PANTRY_UNITS_PER_DAY)
+        self.sim.step += 1
+        before, rng = dict(self.sim.pantry), self.sim.rng.getstate()
+        with self.assertRaises(visitors.RateLimited):
+            self.act(kind="work", task="garden")
+        self.assertEqual(self.sim.pantry, before)
+        self.assertEqual(self.sim.rng.getstate(), rng)
+        self.sim.step += 96
+        self.sim.visiting["step_actions"] = {"step": self.sim.step, "count": visitors.GLOBAL_ACTIONS_PER_STEP}
+        with self.assertRaises(visitors.RateLimited):
+            self.act(kind="work", task="garden")
+        self.sim.visiting["step_actions"]["count"] = 0
+        self.act(kind="work", task="garden")
+        self.assertEqual(self.v["units"]["used"], 1)
 
     def test_lease_expires_and_observation_lists_typed_actions(self):
         obs = visitors.observe(self.sim, self.vid)
@@ -356,6 +498,8 @@ class VisitorServerTests(unittest.TestCase):
         self.assertEqual(self.call("/api/visitors/visitor-99/observation", bearer=token)[0], 404)
         status, obs = self.call(f"/api/visitors/{vid}/observation", bearer=token)
         self.assertEqual(status, 200)
+        self.assertEqual(reg["welcome"], obs["welcome"])
+        self.assertNotIn("token", json.dumps(obs["welcome"]))
         other = self.register("Second")
         self.assertEqual(self.call(f"/api/visitors/{vid}/act", {"step": obs["step"], "kind": "move", "place": "jetty"},
                                    bearer=other["token"])[0], 401)
@@ -371,6 +515,63 @@ class VisitorServerTests(unittest.TestCase):
         self.assertEqual(self.call(f"/api/visitors/{vid}/observation", bearer=token)[0], 401)
         public = self.call("/api/visitors")[1]
         self.assertEqual({v["id"]: v["status"] for v in public["visitors"]}[vid], "left")
+
+    def test_registration_errors_are_readable_and_rate_limited(self):
+        self.enable()
+        reg = self.register("O'Bay-7")
+        self.assertEqual(self.session.sim.visiting["visitors"][reg["visitor_id"]]["name"], "O'Bay-7")
+        for data, message in (({"name": "o'bay-7"}, "already used"),
+                              ({"name": "Mara"}, "already used"),
+                              ({"name": "Bad.Name"}, "Name must"),
+                              ({}, "Name must")):
+            status, body = self.call("/api/visitors/register", data)
+            self.assertEqual(status, 400)
+            self.assertIn(message, body["error"])
+        for name in ("Two", "Three", "Four"):
+            self.register(name)
+        status, body = self.call("/api/visitors/register", {"name": "Five"})
+        self.assertEqual(status, 429)
+        self.assertIn("next step", body["error"])
+
+    def test_example_harness_follows_join_flow_and_leaves(self):
+        self.enable()
+        script = Path(__file__).resolve().parents[1] / "examples" / "visitor_harness.py"
+        run = subprocess.run([sys.executable, str(script), "--url", self.base,
+                              "--name", "Harness Wayfarer", "--steps", "1"],
+                             text=True, capture_output=True, timeout=10)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('Welcome: {"village":', run.stdout)
+        self.assertIn("Harness Wayfarer arrived", run.stdout)
+        self.assertIn("move → accepted", run.stdout)
+        self.assertIn("Harness Wayfarer left", run.stdout)
+        visitor = next(iter(self.session.sim.visiting["visitors"].values()))
+        self.assertEqual(visitor["status"], "left")
+        self.assertNotIn(visitor["id"], self.session.visitor_tokens)
+        self.assertEqual([r["kind"] for r in self.session.sim.visiting["ledger"]], ["arrive", "move", "left"])
+
+    def test_example_harness_joins_with_invite_walks_and_works(self):
+        self.session.invite_code = "join-test-invite"
+        self.enable()
+        self.session.sim.step = 48  # Morning, so everyday work is available.
+        self.session.interval = 0.3
+        self.session.thread.start()
+        script = Path(__file__).resolve().parents[1] / "examples" / "visitor_harness.py"
+        run = subprocess.run([sys.executable, str(script), "--url", self.base,
+                              "--name", "Working Wayfarer", "--steps", "18"],
+                             env={**os.environ, "VILLAGE_SIM_VISITOR_INVITE": "join-test-invite"},
+                             text=True, capture_output=True, timeout=15)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("work → accepted", run.stdout)
+        self.assertIn("Working Wayfarer left", run.stdout)
+        self.assertNotIn("join-test-invite", run.stdout)
+        self.assertNotIn("operator-test-token-123", run.stdout)
+        with self.session.condition:
+            visitor = next(iter(self.session.sim.visiting["visitors"].values()))
+            self.assertEqual(visitor["status"], "left")
+            work = [e for e in self.session.sim.events if e["kind"] == "visitor_work"]
+            self.assertTrue(work)
+            self.assertTrue(all(e["visitor"] == visitor["id"] for e in work))
+            self.assertLessEqual(visitor["units"]["used"], visitors.PANTRY_UNITS_PER_DAY)
 
     def test_visitor_endpoints_do_not_require_a_local_host_header(self):
         self.enable()

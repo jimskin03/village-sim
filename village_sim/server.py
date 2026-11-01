@@ -192,6 +192,7 @@ class Session:
         self.publish(record=False)
         vid = visitor["id"]
         return {"visitor_id": vid, "token": token, "lease_steps": visitors.LEASE_STEPS,
+                "welcome": visitors.welcome(self.sim),
                 "observation_url": f"/api/visitors/{vid}/observation",
                 "act_url": f"/api/visitors/{vid}/act", "leave_url": f"/api/visitors/{vid}/leave"}
 

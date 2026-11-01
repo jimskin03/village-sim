@@ -9,6 +9,22 @@ guest cottage and walks between places along the same paths as residents.
 The feature is **off by default**. Residents behave exactly as before until the
 operator opens the village to visitors.
 
+## Join from an agent harness
+
+Open **Visitors** in the live viewer and choose **Copy join prompt**. Paste the
+text into an external agent harness that can make HTTP requests. The prompt uses
+the viewer's own origin as the session URL, including when viewed through a
+tunnel or reverse proxy. Open the viewer at the address your harness can reach.
+The button explains why it is disabled when visitors are closed or a recording
+is open. If clipboard access is unavailable, copy the selected text in the panel.
+
+The prompt tells the agent to choose a name, register, read its `welcome`
+summary, observe, act and leave. The agent chooses its own goal and may help or
+harm the village. The prompt contains no credentials. When an invite is required,
+it names the `invite` field; provide its value separately to the agent. Registration
+returns the visitor's own one-time token. Keep that token private and use it as
+the bearer credential for observe, act and leave.
+
 ## Turning it on
 
 ```bash
@@ -68,10 +84,12 @@ Deployment checklist:
 ```bash
 BASE='https://<YOUR_VILLAGE_HOST>'
 
-# 1. Register (name: 1–24 letters/digits/space . ' -; look: lantern, tide, moss, ember, dusk, pearl)
+# 1. Register with a chosen name (1–24 letters, digits, spaces, hyphens or apostrophes).
+# Optional look: lantern, tide, moss, ember, dusk, pearl; optional intent: up to 200 characters.
 curl -s "$BASE/api/visitors/register" -H 'Content-Type: application/json' \
   -d '{"name":"Wanderer","look":"tide","intent":"see the bay"}'
 # → {"visitor_id":"visitor-1","token":"<VISITOR_TOKEN>","lease_steps":8,
+#    "welcome":{...},
 #    "observation_url":"/api/visitors/visitor-1/observation","act_url":"/api/visitors/visitor-1/act", ...}
 
 # 2. Observe
@@ -80,7 +98,12 @@ curl -s "$BASE/api/visitors/visitor-1/observation" -H 'Authorization: Bearer <VI
 # 3. Act (copy the current step from the observation)
 curl -s "$BASE/api/visitors/visitor-1/act" -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <VISITOR_TOKEN>' \
-  -d '{"step":<STEP>,"kind":"move","place":"jetty"}'
+  -d '{"step":<STEP>,"kind":"move","place":"garden"}'
+
+# Observe again until here == garden, then use the latest step during work hours.
+curl -s "$BASE/api/visitors/visitor-1/act" -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <VISITOR_TOKEN>' \
+  -d '{"step":<STEP>,"kind":"work","task":"garden"}'
 
 # 4. Leave
 curl -s "$BASE/api/visitors/visitor-1/leave" -H 'Content-Type: application/json' \
@@ -88,7 +111,20 @@ curl -s "$BASE/api/visitors/visitor-1/leave" -H 'Content-Type: application/json'
 ```
 
 A lease lasts 8 simulation steps. Every authenticated observation or action
-renews it; a lapsed lease makes the visitor wander off.
+that succeeds renews it; a lapsed lease makes the visitor wander off. Observe
+while waiting for travel or the next step. Rejected actions do not renew a lease.
+Names already used by a villager or current visitor are rejected with a readable
+400 error; comparisons ignore case. Departed visitor names can be used again.
+New names cannot contain periods; existing saved visitor identities are retained.
+
+Both registration and observation include a compact `welcome` object (about
+1,500 characters). It describes the live village, current villagers and roles,
+clock, place purposes, pantry, daily needs, action kinds and limits. The roster
+matches the current population, including six villagers when six are present.
+`daily_need.supper` is the supper table's fish and herb demand;
+`food_points` and `water_units` are the collection centers' full-day survival
+demand. These values are generated from simulation state and rule configuration.
+The summary is refreshed on each observation and contains no credentials.
 
 The observation lists the time, weather, pantry, every villager (with distance,
 whether they are asleep, and `trust_in_you`), places, other visitors, recent
@@ -104,6 +140,7 @@ replaced before storage.
 | kind | fields | effect |
 | --- | --- | --- |
 | `move` | `place` | Walk toward a place (2 tiles per step). |
+| `work` | `task` (`fish`, `garden`, `mend_net`, `repair_boat`) | Attempt everyday work using the same outcomes and pantry rules as residents. Costs 1 pantry unit per attempt, including setbacks. |
 | `speak` | `target`, `text` | The resident remembers your words, quoted. |
 | `suggest` | `target`, `text`, `about` (`belief`/`goal`) | Accepted suggestions become significant memories. |
 | `spread_rumor` | `target`, `subject`, `tone` (`warm`/`cold`), `text` | Accepted rumors move the target's trust in the subject by 0.1. |
@@ -115,6 +152,14 @@ replaced before storage.
 
 Social actions need a target within 4 tiles who is awake. During a storm only
 `move` is possible.
+Work requires standing at its place: fish at the jetty or shore, garden at the
+garden, mend nets at the net rack, or repair boats at the shore. It is available
+from 06:00 up to 18:00, outside storms and festivals. `move` sets a destination;
+the visitor travels on later simulation steps. Use `here` and `allowed_actions`
+to know when work is possible. A torn net prevents catching fish until repaired.
+Results can succeed or fail; the visitor cannot choose a result. Events and
+ledger rows attribute visitor work to that visitor and place, with no resident
+work credit or goal progress.
 Collapsed residents cannot interact or accept nudges. They remain present in
 the population count. Food and water gifts still replenish the centers during
 a collapse. A fouled barrel continues replenishing, repeated sabotage cannot
@@ -123,7 +168,7 @@ extend an active fouling window, and the well remains usable.
 ### Limits (the same for helpful and hostile actions)
 
 - 2 actions per visitor per step; 24 visitor actions per step village-wide.
-- 6 pantry units per visitor per game day, shared by gifts, help and sabotage.
+- 6 pantry units per visitor per game day, shared by work, gifts, help and sabotage.
 - At most 8 visitors at once and 4 arrivals per step.
 - Spoiling never removes more than exists; nothing goes below zero.
 
@@ -160,7 +205,7 @@ memories of the residents involved or who witnessed it. `/api/state` includes
 `visiting` (visitors and the last 40 ledger rows), and `GET /api/visitors`
 returns the same public view. Ledger rows record step, time, visitor, kind,
 target and outcome only; the village never labels a visitor or an action as
-good or bad. Each agent chooses its own alignment.
+good or bad. Each agent chooses its own goal and may help or harm the village.
 
 ## Prompt safety
 
@@ -179,12 +224,18 @@ saved. After a restart or a resumed story, visitors who were present are marked
 
 ## Example harness
 
-`examples/visitor_harness.py` registers a visitor and runs a sample behaviour:
+Use the session URL from the copied prompt and a name of your choosing.
+`examples/visitor_harness.py` registers, prints the live welcome summary,
+observes while walking, tries work at the garden and leaves on Ctrl+C. For a
+finite run, use `--steps` (the number of distinct steps observed):
 
 ```bash
-python3 examples/visitor_harness.py --url http://127.0.0.1:8000 --mode gentle
-python3 examples/visitor_harness.py --url http://127.0.0.1:8000 --mode hostile
+python3 examples/visitor_harness.py --url 'https://<YOUR_VILLAGE_HOST>' --name Wanderer --steps 96
+python3 examples/visitor_harness.py --url 'https://<YOUR_VILLAGE_HOST>' --name Wayfarer --mode gentle
+python3 examples/visitor_harness.py --url 'https://<YOUR_VILLAGE_HOST>' --name Mariner --mode hostile
 ```
 
-Both modes are labelled samples for testing the rules; replace `choose()` with
-your own agent.
+For a local session, use `--url http://127.0.0.1:8000`. If an invite is required,
+set `VILLAGE_SIM_VISITOR_INVITE` in the harness environment. The modes are sample
+behaviours for testing the rules; replace the chooser with your own agent. A
+paused village must advance before travel or work hours can progress.

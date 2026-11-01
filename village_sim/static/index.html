@@ -326,6 +326,11 @@
         <div class="panel-body" tabindex="0" aria-label="Visiting agents">
           <p id="visitor-status" class="visitor-status"></p>
           <div class="visitor-controls">
+            <button id="copy-join-prompt" disabled aria-describedby="visitor-join-note">Copy join prompt</button>
+          </div>
+          <p id="visitor-join-note" class="empty-note" role="status">Open the village to visitors to copy a join prompt.</p>
+          <textarea id="visitor-join-prompt" aria-label="Join prompt to copy manually" rows="10" readonly hidden></textarea>
+          <div class="visitor-controls">
             <button data-visitor-action="enable">Welcome visitors</button
             ><button data-visitor-action="disable" title="Kill switch: closes the village and sends every visitor away">Close to visitors</button
             ><button data-visitor-action="revoke_all">Revoke all passes</button>

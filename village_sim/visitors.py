@@ -38,6 +38,7 @@ from __future__ import annotations
 import copy
 import re
 
+from . import survival, work
 from .cognition import planning
 from .cognition.memory import memory_view
 from .cognition.reflection import bump_trust
@@ -72,7 +73,7 @@ NEARBY = 4
 LEDGER_LIMIT = 200
 RETAINED_DEPARTED = 24
 MOODS = ("content", "hopeful", "worried", "tired")
-KINDS = ("move", "speak", "suggest", "spread_rumor", "influence_mood", "nudge_action",
+KINDS = ("move", "work", "speak", "suggest", "spread_rumor", "influence_mood", "nudge_action",
          "gift", "help", "sabotage")
 OPENNESS = {"mara": 0, "tom": 10, "lin": -10, "ada": 5, "ivo": -5, "nell": 5, "ren": 10, "bea": 5}
 THRESHOLDS = {"speak": 30, "suggest": 50, "influence_mood": 50, "nudge_action": 55, "spread_rumor": 60}
@@ -88,6 +89,7 @@ SABOTAGE["spoil_fish"] += ("food_center",)
 SABOTAGE["spoil_herbs"] += ("food_center",)
 FIELDS = {
     "move": {"place"},
+    "work": {"task"},
     "speak": {"target", "text"},
     "suggest": {"target", "text", "about"},
     "spread_rumor": {"target", "subject", "tone", "text"},
@@ -98,7 +100,9 @@ FIELDS = {
     "sabotage": {"effect", "amount"},
 }
 STATUSES = ("active", "left", "expired", "expelled", "revoked")
+# Earlier saves allowed periods in visitor names; retain those identities.
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .'\-]{0,23}$")
+_CHOSEN_NAME = re.compile(r"[A-Za-z0-9 '\-]{1,24}")
 
 
 class RateLimited(Exception):
@@ -172,8 +176,9 @@ def register(sim, data: dict, *, invite_ok=True) -> dict:
     if not invite_ok:
         raise PermissionError("A valid invite code is required to visit")
     name = data.get("name")
-    if not isinstance(name, str) or not _NAME.match(name.strip()):
-        raise ValueError("Name must be 1–24 letters, digits, spaces or . ' -")
+    if (not isinstance(name, str) or not _CHOSEN_NAME.fullmatch(name)
+            or not name.strip()):
+        raise ValueError("Name must be 1–24 letters, digits, spaces, hyphens or apostrophes")
     name = name.strip()
     taken = {a.name.casefold() for a in sim.residents.values()} | {
         v["name"].casefold() for v in _active(sim).values()} | {"wren"}
@@ -360,6 +365,8 @@ def _apply(sim, visitor, kind, data):
         return {"outcome": "accepted", "destination": place}
     if kind in ("gift", "help", "sabotage"):
         return _pantry_action(sim, visitor, kind, data, prov)
+    if kind == "work":
+        return _work_action(sim, visitor, data, prov)
     aid, agent = _target(sim, visitor, data)
     if kind == "speak":
         text = clean_text(data.get("text"))
@@ -463,6 +470,28 @@ def _adopt_nudge(sim, aid, place, event):
     return True
 
 
+def _work_action(sim, visitor, data, prov):
+    task, here = data.get("task"), _here(sim, visitor)
+    if task not in work.TASKS:
+        raise ValueError("Choose task from: " + ", ".join(work.TASKS))
+    spec = work.TASKS[task]
+    if here not in spec["places"]:
+        raise ValueError(f"Stand at the {' or '.join(spec['places'])} for {task}")
+    options = work.options(sim, here, spec["role"])
+    if not options:
+        raise ValueError("Work is available from 06:00 to 18:00 outside storms and festivals")
+    # An attempt costs one unit even when the world's result is a setback.
+    _spend_units(visitor, 1)
+    outcome = work.perform(sim, options)
+    text = f"{visitor['name']}, a visitor, {outcome['detail']}."
+    visitor["activity"] = text
+    event = sim.event(text, "visitor_work", (), visitor=visitor["id"], provenance=prov,
+                      place=here, task=task, result=outcome["result"], success=outcome["success"])
+    _record(sim, visitor, "work", here, "accepted", event)
+    return {"outcome": "accepted", "event_id": event["id"], "result": outcome["result"],
+            "success": outcome["success"], "pantry": dict(sim.pantry)}
+
+
 def _pantry_action(sim, visitor, kind, data, prov):
     here = _here(sim, visitor)
     name, vid = visitor["name"], visitor["id"]
@@ -555,6 +584,10 @@ def allowed_actions(sim, visitor) -> list[dict]:
     actions = [{"kind": "move", "place": list(sim.world.places)}]
     if sim.weather == "storm":
         return actions
+    tasks = [task for task, spec in work.TASKS.items()
+             if here in spec["places"] and work.options(sim, here, spec["role"])]
+    if tasks:
+        actions.append({"kind": "work", "task": tasks})
     if targets:
         actions += [
             {"kind": "speak", "target": targets, "text": f"1–{TEXT_LIMIT} characters"},
@@ -579,12 +612,43 @@ def allowed_actions(sim, visitor) -> list[dict]:
     return actions
 
 
+def welcome(sim) -> dict:
+    """Compact onboarding data, derived from the current village and rule limits."""
+    centers = survival.centers(sim)
+    return {
+        "village": f"{sim.world.config['name']}: a small fishing village. You choose your goal; you may help or harm.",
+        "villagers": {a.name: a.role for a in sim.agents.values()},
+        "clock": {"minutes_per_step": sim.world.config["minutes_per_step"],
+                  "steps_per_day": 1440 // sim.world.config["minutes_per_step"],
+                  "day": sim.day, "step": sim.step},
+        "places": {pid: "/".join(task for task, spec in work.TASKS.items() if pid in spec["places"])
+                   or p["kind"] for pid, p in sim.world.places.items()},
+        "pantry": dict(sim.pantry),
+        "daily_need": {"supper": survival.supper_need(sim),
+                       "food_points": centers["food"]["daily_need"], "water_units": centers["water"]["daily_need"]},
+        "actions": {
+            "move": "between places",
+            "work": "on site, daylight, no festival; 1 unit/attempt",
+            **{kind: f"awake target within {NEARBY} tiles; " + (
+                f"text <= {TEXT_LIMIT}" if kind in ("speak", "suggest", "spread_rumor") else
+                "legal place" if kind == "nudge_action" else "/".join(MOODS))
+               for kind in THRESHOLDS},
+            "gift": "on site; 1-2 units", "help": "on site; 1 unit",
+            "sabotage": "on site; 1-2 units",
+        },
+        "limits": {"actions_per_step": ACTIONS_PER_STEP, "pantry_units_per_day": PANTRY_UNITS_PER_DAY,
+                   "global_actions_per_step": GLOBAL_ACTIONS_PER_STEP, "lease_steps": LEASE_STEPS,
+                   "storm": "move only"},
+    }
+
+
 def observe(sim, vid) -> dict:
     visitor = sim.visiting["visitors"][vid]
     own = visitor["step_actions"]
     used = own["count"] if own["step"] == sim.step else 0
     units = visitor["units"]["used"] if visitor["units"]["day"] == sim.day else 0
     return {
+        "welcome": welcome(sim),
         "step": sim.step, "day": sim.day, "minute": sim.minute,
         "time": f"{sim.minute // 60:02}:{sim.minute % 60:02}",
         "weather": sim.weather, "festival": sim.step < sim.festival_until,
@@ -643,7 +707,8 @@ def validate_state(sim):
     for vid, v in state["visitors"].items():
         if (not isinstance(v, dict) or set(v) != expected or v["id"] != vid
                 or not re.fullmatch(r"visitor-[1-9][0-9]*", vid) or int(vid[8:]) >= state["next_id"]
-                or not isinstance(v["name"], str) or not _NAME.match(v["name"])
+                or not isinstance(v["name"], str) or not (
+                    _CHOSEN_NAME.fullmatch(v["name"]) or _NAME.fullmatch(v["name"]))
                 or v["look"] not in LOOKS or v["color"] != LOOKS[v["look"]]
                 or (v["intent"] is not None and (not isinstance(v["intent"], str) or len(v["intent"]) > INTENT_LIMIT))
                 or v["status"] not in STATUSES
