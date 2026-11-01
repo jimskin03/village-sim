@@ -36,13 +36,19 @@ const fit = page => page.evaluate(() => {
   return map.left >= view.left - 1 && map.top >= view.top - 1
     && map.right <= view.right + 1 && map.bottom <= view.bottom + 1;
 });
+const fillsBrowser = page => page.evaluate(() => {
+  const map = document.querySelector("#scene-inner").getBoundingClientRect();
+  const view = document.querySelector("#scene-viewport").getBoundingClientRect();
+  return view.left === 0 && view.top === 0 && view.width === innerWidth && view.height === innerHeight
+    && map.left <= 1 && map.top <= 1 && map.right >= innerWidth - 1 && map.bottom >= innerHeight - 1;
+});
 try {
   const name = `O'Bay-${Date.now()}`;
   registration = await request("/api/visitors/register", { name, look: "tide" });
   const observation = await request(registration.observation_url, undefined, registration.token);
   await request(registration.act_url, { step: observation.step, kind: "move", place: "garden" }, registration.token);
   // The narrow desktop viewport exercises the CSS space available at 175% zoom.
-  for (const [width, height] of [[1280, 800], [390, 844], [731, 457]]) {
+  for (const [width, height] of [[1366, 768], [1366, 656], [1280, 800], [390, 844], [731, 457]]) {
     const context = await browser.newContext({ viewport: { width, height },
       permissions: ["clipboard-read", "clipboard-write"] });
     const page = await context.newPage();
@@ -51,7 +57,9 @@ try {
     await page.waitForSelector(".sprite");
     await page.waitForFunction(() => document.querySelector("#playback-state").textContent === "Paused");
     assert.equal(await page.locator("#play").isDisabled(), true);
-    assert.ok(await fit(page), "Overview fits before opening a drawer");
+    assert.ok(await fillsBrowser(page), "The village covers the browser on first load");
+    assert.equal(await page.locator("#fill-screen").getAttribute("aria-pressed"), "true");
+    await page.screenshot({ path: join(artifacts, `full-browser-${width}-${height}.png`) });
     if (width === 1280) {
       const replay = { schema_version: 1, world: await request("/api/world"), snapshots: [original] };
       await page.locator("#import").setInputFiles({ name: "viewer-check.json", mimeType: "application/json",
@@ -90,19 +98,29 @@ try {
     await page.locator("#sound").click();
     await page.locator("#zoom").click();
     assert.equal(await page.locator("#map-scale").textContent(), "150%");
-    const beforeDrag = await page.locator("#scene-viewport").evaluate(el => ({
-      left: el.scrollLeft, top: el.scrollTop, x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y,
-      width: el.clientWidth,
-    }));
-    // Start in the empty right edge, away from clickable villager sprites.
-    await page.mouse.move(beforeDrag.x + beforeDrag.width - 24, beforeDrag.y + 20);
+    const beforeDrag = await page.locator("#scene-viewport").evaluate(el => {
+      const view = el.getBoundingClientRect();
+      // The full-browser map sits behind the HUD; drag on exposed map content.
+      for (const y of [0.5, 0.7, 0.3]) for (const x of [0.75, 0.5, 0.25]) {
+        const px = view.x + el.clientWidth * x, py = view.y + el.clientHeight * y;
+        const target = document.elementFromPoint(px, py);
+        if (target && el.contains(target) && !target.closest("button"))
+          return { left: el.scrollLeft, top: el.scrollTop, x: px, y: py };
+      }
+      throw new Error("No exposed map area for dragging");
+    });
+    await page.mouse.move(beforeDrag.x, beforeDrag.y);
     await page.mouse.down();
-    await page.mouse.move(beforeDrag.x + beforeDrag.width - 64, beforeDrag.y + 50, { steps: 4 });
+    await page.mouse.move(beforeDrag.x - 40, beforeDrag.y + 30, { steps: 4 });
     await page.mouse.up();
     assert.ok(await page.locator("#scene-viewport").evaluate((el, before) =>
       el.scrollLeft !== before.left || el.scrollTop !== before.top, beforeDrag), "Map drag changes the view");
     await page.locator("#zoom-out").click();
-    assert.ok(await fit(page), "Zoom out restores the whole village");
+    assert.ok(await fillsBrowser(page), "Zoom out restores the browser-filling view");
+    await page.locator("#zoom-out").click();
+    assert.ok(await fit(page), "Zoom out again fits the whole village");
+    await page.locator("#fill-screen").click();
+    assert.ok(await fillsBrowser(page), "Fill screen restores the full browser after Overview");
     await page.locator("#zoom").click();
     await page.locator("#overview").click();
     await page.locator("#labels").click();
@@ -127,7 +145,7 @@ try {
     assert.equal(await page.locator('[data-visitor-action="disable"]').isDisabled(), false);
     await page.screenshot({ path: join(artifacts, `visitors-${width}.png`) });
     await context.close();
-    console.log(`Viewer passed at ${width}×${height}: fit, zoom, drag, drawers, scrolling, operator lock, sound, visitor and clipboard.`);
+    console.log(`Viewer passed at ${width}×${height}: full browser, Overview, zoom, drag, drawers, scrolling, operator lock, sound, visitor and clipboard.`);
   }
   assert.deepEqual(errors, []);
 } finally {

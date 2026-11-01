@@ -27,8 +27,11 @@ Select a villager on the map or a card to inspect their persona, daily goals,
 friendships, daily plan and session memories. Goal progress and familiar faces
 appear in **Story**; select a friend to take a closer look at them.
 
-The village starts in **Overview**, fitting the whole map between the playback
-and map controls. **+** and **−** zoom the map; Overview fits it again. Names
+The village fills the browser by default, with the playback, map controls and
+dock floating over the painting. **+** and **−** zoom the map; **Overview** fits
+the whole village between the controls. **Fill screen** returns to the view
+that covers the browser. The painting keeps its proportions; drag, scroll or
+swipe to reach the edges when the browser has a different shape. Names
 stay readable while the map changes size, and hovering a villager shows their
 role and activity. **Routine** means daily routines; **Planning** means Hybrid
 with local replies when no AI provider is connected.
