@@ -1,15 +1,14 @@
 # Cognitive engine and hybrid mode
 
 Delivery contract for [issue #4](https://github.com/jimskin03/village-sim/issues/4).
-Phases 1–3 are implemented. Personal reflection, local knowledge and coordination
-remain future stages.
+Phases 1–4 are implemented. Local knowledge and coordination remain future stages.
 
 | Stage | Deliverable | Status |
 | --- | --- | --- |
 | 1 | Persistent episodic/semantic memory and retrieval | Implemented |
 | 2 | Autonomous plans, replanning and cognition mode flag | Implemented |
 | 3 | Multi-turn conversations and negotiated commitments | Implemented |
-| 4 | Individual reflection and evolving trust | Specified |
+| 4 | Individual reflection and evolving trust | Implemented |
 | 5 | Local perception and information provenance | Specified |
 | 6 | Agent-organized gatherings and coordination | Specified |
 
@@ -172,7 +171,8 @@ Automatic calls remain at least ten seconds apart, with thirty-second error
 backoff and thirty-second per-request timeout. Optional embedding and planning
 calls run sequentially in the background. Think bypasses spacing, not validation.
 
-Checkpoint schema 4 adds conversations and commitments; schema 3 introduced
+Checkpoint schema 5 adds per-resident trust and reflection cursors. Schema 4
+adds conversations and commitments; schema 3 introduced
 cognition mode and per-resident plans. Schema 3 migrates with empty social history. Schema 2 migrates
 to rules with empty cognitive plans; schema 1 first receives memory metadata.
 Migration preserves input, identity, memory IDs/content and random state.
@@ -183,8 +183,9 @@ Provider keys, connections, derived indexes and embedding caches are excluded.
 `cognition/planning.py` owns legality, proposal validation and plan construction;
 `Simulation` executes and records outcomes; `decisions.py` remains the fallback;
 `providers.py` adapts the configured completion API. The server coordinates calls
-outside the world lock. `conversations.py` owns dialogue and commitments; reflection/perception and
-a larger engine coordinator remain work for subsequent stages.
+outside the world lock. `conversations.py` owns dialogue and commitments.
+`cognition/reflection.py` owns private insights, trust, and helper choice.
+Perception and coordination remain later stages.
 
 ## Social cognition
 
@@ -218,7 +219,11 @@ plan, accepted meetings and twelve retrieved memories (6,000 characters). The sh
 transcript is visible to both; the partner's private memories and the omniscient
 journal are excluded. One call per turn uses the existing per-resident worker and
 10-second spacing/30-second error backoff. Unconnected residents, failed replies
-and turns during provider cooldown use deterministic replies. Calls do not block
+and turns during provider cooldown use deterministic replies. A fallback reply
+accepts a pending offer only when it serves an unfinished goal, or when trust in
+the partner is positive and that partner is the preferred helper. Negative trust
+declines. Any other valid offer is deferred with ordinary speech, so a later model
+turn can still decide. Calls do not block
 the clock; simulation identity, connection identity, conversation ID, turn index,
 availability and current terms are rechecked before adoption. A paused session may
 advance dialogue through provider replies or Think now without moving the clock.
@@ -238,21 +243,29 @@ thirty-two commitments; checkpoints retain all social history.
 
 Checkpoint validation checks alternating turns, memory references, matching offers
 and acceptance, and rejects unilateral or missing appointments. Schema 1–3 saves
-migrate to schema 4 without manufacturing conversations. Personal trust updates,
-private knowledge provenance and group gatherings remain stages 4–6.
+migrate to schema 4 without manufacturing conversations. Schema 4 saves migrate
+to schema 5 with empty trust. Private knowledge provenance and group gatherings
+remain stages 5–6.
 
-### Personal reflection and trust (stage 4)
+### Personal reflection and trust (stage 4, implemented)
 
-Accumulate importance since the resident's last reflection. Trigger at 5.0 or
-day's end with new evidence, at most once per resident per simulated hour.
-Request up to three personal insights grounded in resident-accessible evidence.
-Validate supporting IDs and participants, store semantic memories with links,
-and retain original episodes. Preserve the shared journal summary separately.
+In Hybrid mode, each resident accumulates importance since their last personal
+reflection. It triggers at 5.0, or at day's end when new evidence exists, and at
+most once per resident per simulated hour. The resident may submit up to three
+`reflection-v1` insights. Each insight cites one or more memories from that
+evidence window; participants and any preferred helper must appear in those
+memories. Invalid evidence is rejected and changes nothing. Accepted insights are
+private semantic memories linked to their sources. Original episodes stay. The
+shared midnight journal summary remains a separate village record.
 
-Trust ranges from -1 to 1, with at most 0.1 adjustment per confirmed kept/missed
-commitment, linked to its outcome. Models describe interpretations but cannot
-rewrite biography/evidence. Later retrieval/planning receive insights and trust
-so observed reliability can influence whom a resident asks for help.
+Trust is a score from -1 to 1 for each other resident. A confirmed kept meeting
+adds 0.1 and a confirmed missed meeting subtracts 0.1, clamped to that range and
+linked to the outcome memory. Cancellation does not move trust. Models may
+describe what the evidence means, but they cannot rewrite biography, episodes,
+or the score. Observations expose `trust` and `preferred_helpers`. When no model
+is connected, a resident whose trust or a grounded insight distinguishes a helper
+adopts a visit plan toward that person. Rules mode keeps the shared journal
+reflection and does not update personal trust.
 
 ### Perception and knowledge (stage 5)
 

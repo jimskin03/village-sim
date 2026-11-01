@@ -15,8 +15,8 @@ import math
 import re
 
 _IMPORTANCE = {
-    "promise": 0.95, "reflection": 0.85, "goal": 0.8, "supper": 0.75,
-    "weather": 0.7, "festival": 0.7, "conversation": 0.65,
+    "promise": 0.95, "insight": 0.9, "trust": 0.88, "reflection": 0.85, "goal": 0.8,
+    "supper": 0.75, "weather": 0.7, "festival": 0.7, "conversation": 0.65,
     "work_summary": 0.5, "arrival": 0.4, "work": 0.3, "activity": 0.15,
 }
 _STOPWORDS = frozenset(
@@ -44,7 +44,7 @@ def make_memory(event: dict, *, importance: float | None = None,
     record.update(
         content=event["text"],
         timestamp=event["timestamp"],
-        type="semantic" if event["kind"] in ("reflection", "work_summary") else "episodic",
+        type="semantic" if event["kind"] in ("reflection", "work_summary", "insight", "trust") else "episodic",
         importance=_IMPORTANCE.get(event["kind"], 0.4) if importance is None else importance,
         source_ids=list(event.get("source_ids", [])),
         embedding=copy.deepcopy(embedding),

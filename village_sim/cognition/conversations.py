@@ -96,6 +96,7 @@ def context(sim, aid):
         "commitments": [copy.deepcopy(c) for c in sim.commitments
                         if c["status"] == "scheduled" and aid in c["terms"]["participants"]],
         "conversation": copy.deepcopy(conversation),
+        "trust": {partner: agent.trust[partner] for partner in sorted(agent.trust)},
         "memories": memory_view(sim.memory_store(aid).retrieve(query, now=sim.total_minutes, limit=12), characters=6000),
         "tasks": TASKS, "earliest_start": sim.total_minutes + 15 + max(
             travel(sim, person, "bench") for person in conversation["participants"]),
@@ -172,7 +173,8 @@ def apply_turn(sim, aid, data):
         sim.commitments.append(commitment)
         names = " and ".join(sim.residents[p].name for p in terms["participants"])
         fact = f"{names} agreed to {terms['task'].replace('_', ' ')} at {terms['place']} at minute {terms['start_minute']} for {terms['duration_minutes']} minutes."
-        sim.event(fact, "promise", terms["participants"], source_ids=[t["memory_id"] for t in conversation["transcript"]])
+        sim.event(fact, "promise", terms["participants"], source_ids=[t["memory_id"] for t in conversation["transcript"]],
+                  task=terms["task"])
         first, second = terms["participants"]
         sim.residents[first].relationships[second] = sim.residents[second].relationships[first] = fact
         finish(sim, conversation, "completed", "meeting agreed")
@@ -186,6 +188,39 @@ def apply_turn(sim, aid, data):
         sim._progress_goal(sim.residents[second], "social", partner=first)
 
 
+def _goal_aligned(sim, aid, partner, terms):
+    agent = sim.agents[aid]
+    task, place = terms["task"], terms["place"]
+    for goal in agent.goals:
+        if goal["completed"]:
+            continue
+        if goal["id"] == "social" and goal["partner"] == partner and task == "talk":
+            return True
+        places = {
+            "fisher": {"fish": ("jetty", "shore"), "repair_nets": ("nets",)},
+            "gardener": {"gather_herbs": ("garden",)},
+            "boatwright": {"repair_boat": ("shore",), "repair_nets": ("nets",)},
+        }[agent.role]
+        if goal["id"] == "work" and place in places.get(task, ()) and goal["place"] == place:
+            return True
+    return False
+
+
+def acceptance(sim, aid, terms):
+    """Fallback agrees only when the offer fits this villager; otherwise it waits or refuses."""
+    partner = next(person for person in terms["participants"] if person != aid)
+    trust = sim.agents[aid].trust.get(partner, 0.0)
+    if trust < 0:
+        return "decline"
+    if _goal_aligned(sim, aid, partner, terms):
+        return "accept"
+    from . import reflection
+    helper = reflection.choose_helper(sim, sim.agents[aid], terms["task"])
+    if trust > 0 and helper is not None and helper.id == partner:
+        return "accept"
+    return "defer"
+
+
 def fallback(sim, aid):
     request = context(sim, aid)
     if request is None:
@@ -194,10 +229,17 @@ def fallback(sim, aid):
     move, terms, speech = "say", None, "I am glad we have time to talk."
     if conversation["offer"] and conversation["offered_by"] != aid:
         try:
-            terms = validate_terms(sim, conversation, conversation["offer"])
-            move, speech = "accept", "Yes, I can make that time. I will meet you there."
+            checked = validate_terms(sim, conversation, conversation["offer"])
         except ValueError:
             move, terms, speech = "decline", None, "I cannot make that meeting. Let us try another time."
+        else:
+            choice = acceptance(sim, aid, checked)
+            if choice == "accept":
+                move, terms, speech = "accept", checked, "Yes, I can make that time. I will meet you there."
+            elif choice == "decline":
+                move, terms, speech = "decline", None, "I would rather not agree to that. I need a more reliable plan."
+            else:
+                move, terms, speech = "say", None, "I need to think about that before I agree."
     elif not conversation["transcript"]:
         start = request["earliest_start"] + 30
         terms = {"participants": conversation["participants"], "place": "bench", "task": "talk",
@@ -237,9 +279,14 @@ def update(sim, *, advance=True):
 
 
 def conclude(sim, commitment, status, reason):
+    from . import reflection
     commitment.update(status=status, reason=reason)
     people = commitment["terms"]["participants"]
-    sim.event(f"Meeting to {commitment['terms']['task'].replace('_', ' ')} {status}: {reason}.", "commitment", people)
+    outcome = sim.event(
+        f"Meeting to {commitment['terms']['task'].replace('_', ' ')} {status}: {reason}.",
+        "commitment", people, task=commitment["terms"]["task"],
+    )
+    reflection.adjust_trust(sim, commitment, outcome)
     for aid in people:
         sim.request_replan(aid, "commitment_" + status)
 

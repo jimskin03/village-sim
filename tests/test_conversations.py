@@ -152,6 +152,24 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(sim.agents["mara"].work_count, 0)
         self.assertEqual(sim.pantry["fish"], 0)
 
+    def test_fallback_acceptance_follows_goals_and_trust(self):
+        offer = terms(self.sim, task="repair_nets", place="nets", start_minute=self.sim.total_minutes + 240)
+        chat.apply_turn(self.sim, "mara", turn(self.sim, "mara", "propose", offer))
+        chat.fallback(self.sim, "tom")
+        self.assertEqual(self.sim.commitments, [])
+        self.assertEqual(self.conversation["status"], "active")
+        self.assertEqual(self.conversation["transcript"][-1]["move"], "say")
+        self.assertIn("think about that", self.conversation["transcript"][-1]["speech"])
+
+        declined = Simulation(2, cognition_mode="hybrid")
+        setup_chat(declined)
+        declined.agents["tom"].trust["mara"] = -0.2
+        boat = terms(declined)
+        chat.apply_turn(declined, "mara", turn(declined, "mara", "propose", boat))
+        chat.fallback(declined, "tom")
+        self.assertEqual(declined.commitments, [])
+        self.assertEqual(declined.conversations[-1]["status"], "declined")
+
     def test_migration_and_malformed_social_state(self):
         agree(self.sim)
         saved = export_session(self.sim)

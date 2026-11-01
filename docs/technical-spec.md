@@ -121,8 +121,10 @@ Each event includes step, day and formatted time.
 Agent fields: `id`, `name`, `role`, `home`, `color`, `persona`, `x`, `y`, `activity`,
 `destination`, `speech`, `memory`, `plan`, `relationships`, `goals`, `provider`,
 `provider_until`, `last_chat`, `last_work`, `work_count`.
-Additive fields include `cognitive_plan`, `cognitive_revision`, `replan_reason`
+Additive fields include `cognitive_plan`, `cognitive_revision`, `replan_reason`,
+`trust`, `last_reflection_step`, `reflection_cursor`, `reflection_reason`,
 and `memory_count`; snapshots also expose `cognition_mode` (`rules` or `hybrid`).
+`trust` maps another resident's id to a score from -1 to 1.
 
 `goals` is an additive v1 field: a list of objects with `id` (`work` or `social`),
 `day`, `title`, `target`, `progress`, `completed`, `place` and `partner` (a villager
@@ -201,9 +203,10 @@ validated checkpoint. Large stories need sufficient browser memory; the full exp
 is downloaded as a Blob without parsing its frames first. The session-resume HTTP
 body remains limited to 50 MB, independently of replay-file size.
 
-Checkpoint schema 4 includes complete cognitive memories, plans, transcripts and
-commitments. Schemas 1–3 migrate before validation, retaining the saved thinking
-style (schemas 1–2 default to Rules). Stop the server before moving its checkpoint
+Checkpoint schema 5 includes complete cognitive memories, plans, transcripts,
+commitments, trust scores, and personal-reflection cursors. Schemas 1–4 migrate
+before validation, retaining the saved thinking style (schemas 1–2 default to Rules).
+Stop the server before moving its checkpoint
 and SQLite sidecar together. Archive storage grows with experience.
 Replay/snapshot schema remains 1.
 

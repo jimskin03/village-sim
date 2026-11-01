@@ -115,7 +115,8 @@ function acceptLive(next) {
   if (next.persistence_error && next.persistence_error !== liveState?.persistence_error)
     toast(next.persistence_error);
   liveState = next;
-  $("#persistence-status").textContent = next.persistence_error || "The village is saved after every step.";
+  $("#persistence-status").textContent = next.persistence_error
+    || "The village is saved after every step. Automatic replay after a restart also needs the recording archive beside the checkpoint.";
   $("#persistence-status").classList.toggle("save-error", Boolean(next.persistence_error));
   if (!recording) render(next);
 }
@@ -343,7 +344,9 @@ function renderRelationships(agent) {
       const other = state.agents.find((a) => a.id === id);
       const name = other?.name || id.charAt(0).toUpperCase() + id.slice(1);
       const sharedFact = typeof fact === "string" ? fact : `${agent.name} and ${name} have shared conversations.`;
-      return `<button class="relationship-item" data-friend="${esc(id)}"${other ? "" : " disabled"}><span>${esc(name)}<small>${esc(sharedFact)}${other ? "" : " · Away from the village"}</small></span>${other ? '<span class="relationship-meta" aria-hidden="true">›</span>' : ""}</button>`;
+      const trust = agent.trust?.[id];
+      const trustNote = typeof trust === "number" ? ` · trust ${trust.toFixed(1)}` : "";
+      return `<button class="relationship-item" data-friend="${esc(id)}"${other ? "" : " disabled"}><span>${esc(name)}<small>${esc(sharedFact)}${trustNote}${other ? "" : " · Away from the village"}</small></span>${other ? '<span class="relationship-meta" aria-hidden="true">›</span>' : ""}</button>`;
     })
     .join("")}</div>`;
 }
@@ -795,8 +798,10 @@ function validRecording(data) {
     )
   )
     return false;
-  return data.snapshots.every(
-    (s) =>
+  return true;
+}
+function validSnapshot(s) {
+  return (
       Number.isInteger(s.step) &&
       Number.isInteger(s.day) &&
       Number.isFinite(s.minute) &&
@@ -863,15 +868,46 @@ function validRecording(data) {
                   goal.progress <= goal.target &&
                   typeof goal.completed === "boolean",
               ))),
-      ),
+      )
+  );
+}
+async function snapshotsLookValid(snapshots) {
+  const chunk = 200;
+  for (let index = 0; index < snapshots.length; index += chunk) {
+    const end = Math.min(snapshots.length, index + chunk);
+    for (let cursor = index; cursor < end; cursor += 1) {
+      if (!validSnapshot(snapshots[cursor])) return false;
+    }
+    if (end < snapshots.length) {
+      toast(`Checking the story… ${end} / ${snapshots.length} frames`);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  return true;
+}
+function confirmLargeStory(file, snapshots) {
+  const bytes = 8 * 1024 * 1024;
+  const frames = 2000;
+  if (file.size < bytes && snapshots.length < frames) return true;
+  const size = file.size >= bytes ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : null;
+  const count = snapshots.length >= frames ? `${snapshots.length} frames` : null;
+  const detail = [size, count].filter(Boolean).join(" and ");
+  return confirm(
+    `This story is ${detail}. Opening it keeps the whole replay in browser memory and can make the page slow. Open it anyway?`,
   );
 }
 $("#import").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   try {
+    if (file.size >= 8 * 1024 * 1024 && !confirmLargeStory(file, [])) {
+      return;
+    }
     const data = JSON.parse(await file.text());
     if (!validRecording(data))
+      throw new Error("That file is not a supported Village Sim recording.");
+    if (file.size < 8 * 1024 * 1024 && !confirmLargeStory(file, data.snapshots)) return;
+    if (!(await snapshotsLookValid(data.snapshots)))
       throw new Error("That file is not a supported Village Sim recording.");
     recording = data;
     world = data.world;
@@ -887,15 +923,21 @@ $("#import").addEventListener("change", async (e) => {
     closePanel();
     renderPlaces();
     renderReplay();
-    toast(data.session ? "Story opened. Replay it or resume from its last saved moment." : "Recording opened. This older recording supports replay only.");
+    const large = file.size >= 8 * 1024 * 1024 || data.snapshots.length >= 2000;
+    toast(large
+      ? "Large story opened. Playback keeps every frame in browser memory."
+      : data.session
+        ? "Story opened. Replay it or resume from its last saved moment."
+        : "Recording opened. This older recording supports replay only.");
   } catch (error) {
     toast(
       error instanceof SyntaxError
         ? "That file is not valid JSON."
         : error.message,
     );
+  } finally {
+    e.target.value = "";
   }
-  e.target.value = "";
 });
 function renderReplay() {
   $("#replay-position").value = replayIndex;

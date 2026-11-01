@@ -40,8 +40,11 @@ that lights after dark. Work produces specific successes or failures. Supper at
 dusk spends the supplies, remembers a shortfall, and shapes tomorrow’s goals.
 Storms damage the net and close the jetty; festivals spend supplies and welcome
 a visitor to the guest cottage. Relationships keep the latest shared promise or
-grudge. At midnight, a two-sentence reflection is pinned above the compact chore
-log. Original episodes and repeated chores remain in long-term memory alongside
+grudge. In Hybrid mode, kept and missed meetings also move a private trust score,
+and a villager who has seen someone break plans will ask a more reliable person
+for help. At midnight, a two-sentence village reflection is pinned above the compact chore
+log. Hybrid villagers may add their own evidence-backed insights without erasing
+those episodes. Original episodes and repeated chores remain in long-term memory alongside
 those summaries. The painting is graded by hour and map markers show the supplies and repairs.
 
 **Save this story** downloads replay frames and a resumable checkpoint. Open a
@@ -85,8 +88,8 @@ can surface after hundreds of chores. It works without embeddings or API calls;
 optionally set an **Embedding model** under Connection details to generate
 semantic vectors through the same provider. Results are cached, and embedding
 failures fall back to keyword recall. Existing saves migrate automatically to
-checkpoint version 4 and retain their thinking style (older saves default to Rules). The [cognition specification](docs/cognition-spec.md)
-describes memory, planning and conversations, plus the remaining reflection, perception and coordination stages.
+checkpoint version 5 and retain their thinking style (older saves default to Rules). The [cognition specification](docs/cognition-spec.md)
+describes memory, planning, conversations, and personal reflection. Perception and coordination remain later stages.
 
 Live memory views and replay frames have fixed budgets: the viewer shows up to
 64 recent memories per resident and the server keeps 256 frames in memory. Every
@@ -96,7 +99,7 @@ keep both files when moving a saved village. Normal restarts retain replay histo
 Reset and imported-story resume start a new replay branch. With `--no-persist`,
 a temporary disk archive lasts until the server closes. Archive failures appear
 in the save status and prevent incomplete exports. Disk use grows with the story;
-opening a large exported story also needs enough browser memory. The total memory
+opening a large exported story asks before loading every frame into browser memory. The total memory
 count includes the complete memory archive, retained in every resumable checkpoint.
 
 Hybrid villagers can also hold six-turn conversations using their separate
@@ -104,7 +107,8 @@ memories and providers. They propose, counter, accept or decline meetings;
 matching agreement adds an appointment to both schedules. Villagers travel to
 accepted meetings, and remember attendance, missed meetings or cancellations.
 Open the Plan tab to see appointments and the latest transcript. Unconnected
-villagers and failed model calls use deterministic replies. Rules mode keeps
+villagers and failed model calls use deterministic replies that accept a meeting
+only when it fits that villager's goals or a positive trust preference. Rules mode keeps
 its existing dialogue.
 
 Keys stay in server memory and are excluded from recordings and browser storage.
@@ -139,6 +143,7 @@ village-sim --headless
 - `village_sim/world.py`: JSON world, walkable geometry, A* pathfinding.
 - `village_sim/cognition/memory.py`: persistent episodic/semantic records and retrieval.
 - `village_sim/cognition/conversations.py`: private dialogue contexts, negotiation and appointments.
+- `village_sim/cognition/reflection.py`: personal insights, trust, and who a villager asks for help.
 - `village_sim/cognition/planning.py`: legal choices and validated autonomous plans.
 - `village_sim/cognition/embeddings.py`: optional bounded semantic-recall cache.
 - `village_sim/simulation.py`: clock, personas, memory, relationships, work and events.
@@ -174,7 +179,9 @@ Planning tests include a mock-model Mara visiting Tom because she remembers his
 request, multi-step execution, interruptions and stale replies. Long-duration
 checks cover 10,000 episodes, indexed retrieval and transmitted memory budgets.
 Conversation tests cover independent model contexts, counteroffers, matching acceptance,
-attendance, interruption, fallback and migration. Recording tests cover complete exports,
+attendance, interruption, fallback and migration. Reflection tests cover trust after
+kept and missed meetings, evidence-backed helper choice, rejected insights, and
+checkpoint migration. Recording tests cover complete exports,
 restart, reset, stable readers and disk failures.
 GitHub Actions runs the suite on Python 3.11, 3.13 and 3.14 for pushes and pull requests.
 

@@ -12,7 +12,7 @@ import random
 from typing import Callable
 
 from .cognition.memory import MemoryStore, memory_view
-from .cognition import planning, conversations
+from .cognition import planning, conversations, reflection
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -112,6 +112,10 @@ class Agent:
     cognitive_plan: dict | None = None
     cognitive_revision: int = 0
     replan_reason: str | None = "no_plan"
+    trust: dict[str, float] = field(default_factory=dict)
+    last_reflection_step: int = -4
+    reflection_cursor: int = 0
+    reflection_reason: str | None = None
 
 
 class Simulation:
@@ -182,7 +186,7 @@ class Simulation:
         self.events.append(item)
         for aid in item["agents"]:
             self.memory_store(aid).add(item)
-            if kind in ("promise", "weather", "festival", "goal", "supper") or details.get("significant"):
+            if kind in ("promise", "weather", "festival", "goal", "supper", "insight", "trust") or details.get("significant"):
                 self.request_replan(aid, kind)
         return item
 
@@ -198,7 +202,9 @@ class Simulation:
             return
         agent = self.residents[aid]
         agent.cognitive_revision += 1
-        agent.replan_reason = reason
+        if reason != "schedule_changed" or agent.replan_reason not in {
+                "insight", "trust", "commitment_missed", "commitment_completed"}:
+            agent.replan_reason = reason
         if agent.cognitive_plan and agent.cognitive_plan["status"] == "active":
             agent.cognitive_plan.update(status="invalidated", reason=reason, updated_step=self.step)
 
@@ -365,6 +371,7 @@ class Simulation:
             "conversation": conversations.context(self, aid),
             "commitments": [copy.deepcopy(c) for c in self.commitments
                             if c["status"] == "scheduled" and aid in c["terms"]["participants"]],
+            "trust": {partner: agent.trust[partner] for partner in sorted(agent.trust)},
             "nearby": [
                 {"id": a.id, "name": a.name, "activity": a.activity} for a in nearby
             ],
@@ -386,6 +393,11 @@ class Simulation:
         observation["allowed_actions"] = [{"place": suggested.place, "activity": suggested.activity}]
         if self.cognition_mode == "hybrid":
             observation["allowed_actions"] = planning.legal_actions(agent, observation)
+            observation["preferred_helpers"] = {
+                task: helper.id if (helper := reflection.choose_helper(self, agent, task)) else None
+                for task in ("talk", "repair_nets", "repair_boat", "gather_herbs", "fish")
+            }
+            observation["reflection"] = reflection.context(self, aid)
         observation["result_options"] = self._result_options(agent, suggested.place)
         observation["mood_options"] = ["content", "hopeful", "worried", "tired"]
         observation["promise_options"] = self._promise_options(agent)
@@ -399,6 +411,9 @@ class Simulation:
             raise ValueError("Decision is stale; fetch a fresh observation")
         if data.get("contract") == conversations.CONTRACT:
             conversations.apply_turn(self, aid, data)
+            return
+        if data.get("contract") == reflection.CONTRACT:
+            reflection.apply_turn(self, aid, data)
             return
         observation = self.observe(aid)
         if data.get("contract") == planning.CONTRACT:
@@ -540,7 +555,8 @@ class Simulation:
         self.pantry["hearth_lit"] = self.minute >= 18 * 60 or self.minute < 6 * 60
         if self.festival_until and self.step >= self.festival_until:
             self.visitor = None
-        if self.day != previous_day:
+        day_ended = self.day != previous_day
+        if day_ended:
             self._reflect(previous_day)
         if self.minute >= 18 * 60 and not any(s["day"] == self.day for s in self.suppers):
             self._supper()
@@ -548,7 +564,7 @@ class Simulation:
             agent.speech = None
             agent.thought = None
             agent.result = None
-            if self.day != previous_day:
+            if day_ended:
                 agent.plan = daily_plan(agent)
                 self._refresh_goals(agent)
             if previous_hour != self.minute // 60 and self.minute // 60 in (0, 6, 10, 13, 15, 18, 21, 23):
@@ -635,6 +651,8 @@ class Simulation:
                         cognitive["remaining"] = cognitive["steps"][cognitive["index"]]["duration_minutes"] // 15
         conversations.attend(self)
         self._converse()
+        reflection.consider(self, day_end=day_ended)
+        reflection.adopt_help_plans(self)
         return self.snapshot()
 
     def _result_options(self, agent, place):

@@ -15,7 +15,7 @@ from .cognition.memory import make_memory, validate_memory
 from .cognition import planning, conversations
 from .simulation import Agent, PERSONAS, Simulation
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
@@ -74,8 +74,10 @@ def _migrate(data):
     """Upgrade older checkpoints without mutating the imported document."""
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int:
         raise ValueError("Unsupported session version")
-    if data["schema_version"] == 4:
+    if data["schema_version"] == SCHEMA_VERSION:
         return data
+    if data["schema_version"] == 4:
+        return _migrate_reflection(copy.deepcopy(data))
     if data["schema_version"] == 3:
         return _migrate_conversations(copy.deepcopy(data))
     if data["schema_version"] == 2:
@@ -117,6 +119,15 @@ def _migrate_planning(data):
 def _migrate_conversations(data):
     data["state"].setdefault("conversations", [])
     data["state"].setdefault("commitments", [])
+    return _migrate_reflection(data)
+
+
+def _migrate_reflection(data):
+    for resident in data["residents"].values():
+        resident.setdefault("trust", {})
+        resident.setdefault("last_reflection_step", -4)
+        resident.setdefault("reflection_cursor", 0)
+        resident.setdefault("reflection_reason", None)
     data["schema_version"] = SCHEMA_VERSION
     return data
 
@@ -325,7 +336,25 @@ def _restore(data):
         for key in ("last_chat", "last_work", "work_count"):
             if not _integer(record[key], -100 if key.startswith("last_") else 0):
                 raise ValueError("Invalid work state")
-        record = {**record, "provider": None, "provider_until": 0}
+        trust = record["trust"]
+        if not isinstance(trust, dict):
+            raise ValueError("Invalid trust")
+        normalized_trust = {}
+        for partner, score in trust.items():
+            if partner not in personas or partner == aid or type(score) not in (int, float):
+                raise ValueError("Invalid trust")
+            scaled = round(float(score) * 10)
+            if abs(float(score) * 10 - scaled) > 1e-6 or not -10 <= scaled <= 10:
+                raise ValueError("Trust must stay between -1 and 1 in steps of 0.1")
+            normalized_trust[partner] = scaled / 10
+        seen = record["last_reflection_step"]
+        if seen != -4 and not (_integer(seen) and seen <= state["step"]):
+            raise ValueError("Invalid reflection clock")
+        if not _integer(record["reflection_cursor"]) or record["reflection_cursor"] > state["next_event_id"]:
+            raise ValueError("Invalid reflection cursor")
+        if record["reflection_reason"] not in (None, "day_end"):
+            raise ValueError("Invalid reflection state")
+        record = {**record, "provider": None, "provider_until": 0, "trust": normalized_trust}
         _validate_plan(record, state, candidate.world, personas)
         restored[aid] = Agent(**record)
     rng = random.Random()

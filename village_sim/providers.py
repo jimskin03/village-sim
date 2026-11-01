@@ -11,7 +11,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .cognition.memory import memory_view
 from .cognition.planning import CONTRACT, validate_proposal
-from .cognition import conversations
+from .cognition import conversations, reflection
 
 
 class ProviderError(Exception):
@@ -172,7 +172,7 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
     agent = observation["agent"]
     # Memory remains complete in the simulation. Only a bounded view is sent to
     # the model so a long village session does not create ever-larger prompts.
-    context = {k: v for k, v in observation.items() if k != "agent"}
+    context = {k: v for k, v in observation.items() if k not in ("agent", "reflection")}
     for key in ("suppers", "reflections"):
         if key in context:
             context[key] = context[key][-3:]
@@ -207,7 +207,9 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
             "Goal and reasons are at most 200 characters. Cite only supplied memory IDs. "
             "Do not invent people, places, resources, commitments or past events. The world "
             "determines movement and work outcomes. Visits are attempts to meet someone, "
-            "not agreements on their behalf. Do not use markdown."
+            "not agreements on their behalf. trust and preferred_helpers record who has "
+            "kept or missed meetings with you. Prefer a reliable helper when you need "
+            "someone else. Insights interpret the past and cannot change it. Do not use markdown."
         )
     body = {
         "model": config.model,
@@ -250,6 +252,30 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         raise ProviderError(
             "The model did not return a valid decision. Try a model that follows JSON instructions."
         ) from None
+
+
+def reflect(config: ProviderConfig, context: dict) -> dict:
+    instructions = (
+        "Reflect privately on the supplied evidence. Return JSON "
+        "{\"contract\":\"reflection-v1\",\"insights\":[{\"text\":\"...\",\"source_ids\":[1],"
+        "\"participants\":[\"tom\"],\"preferred_helper\":null,\"task\":null}]}. "
+        "Use at most three insights. Each text is 1–240 characters and may only interpret "
+        "evidence IDs you were given. participants must appear in those memories. "
+        "preferred_helper is null, or one of those participants other than yourself; "
+        "task is null unless you name a helper, and then it must be one of the supplied tasks. "
+        "Do not invent events, people, supplies, trust numbers, or a new biography. Do not use markdown."
+    )
+    try:
+        payload = _complete(config, {"model": config.model, "messages": [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+        ]})
+        return reflection.validate_insights(_parse_decision(_message_text(payload["choices"][0])), context)
+    except HTTPError as error:
+        error.close()
+        raise ProviderError("The reflection provider rejected the request. A private reflection will be used.") from None
+    except (ProviderError, URLError, OSError, TimeoutError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+        raise ProviderError("The reflection provider could not produce a valid reflection. A private reflection will be used.") from None
 
 
 def converse(config: ProviderConfig, context: dict) -> dict:

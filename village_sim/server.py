@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 from . import providers
 from .cognition.planning import CONTRACT
 from .cognition.embeddings import EmbeddingCache
-from .cognition import conversations
+from .cognition import conversations, reflection
 from .simulation import Simulation
 from .persistence import export_session, read_session, restore_session, write_session
 from .recording import RecordingArchive
@@ -258,22 +258,22 @@ class Session:
             hybrid = self.sim.cognition_mode == "hybrid"
             conversation = conversations.active(self.sim, aid) if hybrid else None
             turn = conversations.context(self.sim, aid) if conversation else None
+            reflect = reflection.context(self.sim, aid) if hybrid and turn is None else None
             if (
                 aid in self.workers
                 or (conversation is not None and turn is None)
-                or (hybrid and conversation is None and not self.sim.agents[aid].replan_reason and not brain.force)
+                or (hybrid and turn is None and reflect is None and not self.sim.agents[aid].replan_reason and not brain.force)
                 or (not hybrid and self.sim.step < brain.next_step)
                 or time.monotonic() < brain.next_call
             ):
                 continue
-            observation = turn or self.sim.observe(aid)
+            observation = turn or reflect or self.sim.observe(aid)
             brain.status = "thinking"
             brain.requests += 1
             brain.force = False
             self.workers.add(aid)
-            Thread(
-                target=self._conversation if turn else self._plan, args=(aid, brain, self.sim, observation), daemon=True
-            ).start()
+            target = self._conversation if turn else self._reflect if reflect else self._plan
+            Thread(target=target, args=(aid, brain, self.sim, observation), daemon=True).start()
 
     def _conversation(self, aid, brain, sim, request):
         action, error = None, None
@@ -302,6 +302,39 @@ class Session:
                     error = "The proposed conversation turn is no longer valid. A rule-based reply was used."
                     try:
                         conversations.fallback(sim, aid)
+                    except ValueError:
+                        pass
+                brain.status = "error" if error else "ready"
+            brain.error = error
+            brain.next_call = time.monotonic() + (30 if error else 10)
+            self.publish()
+            self.schedule_brains()
+
+    def _reflect(self, aid, brain, sim, request):
+        action, error = None, None
+        try:
+            action = providers.reflect(brain.config, request)
+        except Exception:
+            error = "The reflection provider failed. A private reflection was used."
+        with self.condition:
+            self.workers.discard(aid)
+            if not self.running or self.sim is not sim or self.brains.get(aid) is not brain:
+                self.condition.notify_all()
+                self.schedule_brains()
+                return
+            if reflection.context(sim, aid) is None:
+                brain.status = "waiting"
+            else:
+                try:
+                    if action is not None:
+                        reflection.apply_turn(sim, aid, {**action, "step": sim.step})
+                        brain.decisions += 1
+                    else:
+                        reflection.fallback(sim, aid)
+                except ValueError:
+                    error = "The reflection no longer fits this villager. A private reflection was used."
+                    try:
+                        reflection.fallback(sim, aid)
                     except ValueError:
                         pass
                 brain.status = "error" if error else "ready"
