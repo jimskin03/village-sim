@@ -118,8 +118,9 @@ curl -s http://127.0.0.1:8000/api/agents/mara/leave \
   -H 'Authorization: Bearer YOUR_TOKEN' -d '{}'
 ```
 
-Detaching or changing providers preserves identity, memory, relationships and
-plans. The next model receives the same villager, with all the experiences from
+Detaching preserves identity, memory and relationships, but invalidates an active
+model plan and clears pending actions. Rules resume movement on the next tick.
+Already accepted meetings remain scheduled; an unfinished conversation is interrupted. The next model receives the same villager, with all the experiences from
 this session. Removing a villager through population settings detaches its
 provider and revokes its token. Reset revokes every token and starts fresh.
 
@@ -133,10 +134,41 @@ The example sends the suggested rule-based action. The UI adapter makes actual
 model calls without needing this example. Replace its `plan` function
 with your own model call; no provider is privileged or hard-coded by the server.
 
+## Hybrid conversation turns
+
+When it is your resident's turn, observation `conversation` contains a private
+context with `conversation_id`, zero-based `turn`, their own memories and schedule,
+and the shared transcript. The partner's private memories are excluded. Submit
+through `/api/agents/{id}/action` using the current observation `step`:
+
+```json
+{
+  "contract": "conversation-v1", "step": 48, "conversation_id": 1, "turn": 0,
+  "move": "propose", "speech": "Could we repair the boat together?",
+  "terms": {"participants": ["mara", "tom"], "place": "shore",
+            "task": "repair_boat", "start_minute": 1890, "duration_minutes": 45}
+}
+```
+
+Copy IDs, participant order and timing from your actual context. Use `say`,
+`propose`, `counter`, `accept` or `decline`, with speech of at most 240 characters.
+Say/decline have null terms. Accept must repeat the latest partner offer exactly.
+The world validates task, place, craft, travel and schedule conflicts before
+updating either schedule. Invalid/stale turns return HTTP 400. Successful turns
+publish immediately; dialogue is limited to six turns and eight simulation steps.
+Observation `commitments` contains your resident's accepted appointments. These
+appointments override individual plans when travel is due. Both participants
+remember attendance, cancellation or a missed meeting.
+
 ## Checkpoints and local documentation
 
 The same guide is available through the About dialog at `/docs`.
-`GET /api/recording` includes a `session` checkpoint alongside replay frames.
+`GET /api/recording` streams all archived replay frames and a portable `session`
+checkpoint. The server keeps only 256 frames in memory. Persistent replay lives
+beside the checkpoint in `session.json.recording.sqlite3`; retain both files when
+moving a village. Normal restart preserves the full replay, while reset and
+imported-story resume begin a new branch. Archive write failure is visible in
+`persistence_error`, and export returns HTTP 503 rather than incomplete history.
 `POST /api/session/resume` with `{"session": checkpoint}` validates the entire
 checkpoint before replacing the village, then pauses it. Resume revokes all
 provider tokens and connections. Provider keys never enter checkpoints.

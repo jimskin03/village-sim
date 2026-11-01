@@ -379,6 +379,18 @@ function renderDetails() {
       const plan = a.cognitive_plan;
       detail.insertAdjacentHTML("afterbegin", `<p class="detail-label">${esc(plan.status.toUpperCase())} PLAN</p><p>${esc(plan.goal)}</p>${plan.steps.map((step, index) => `<div class="plan-item${index === plan.index && plan.status === "active" ? " current" : ""}"><time>${step.duration_minutes}m</time><span>${esc(step.action)} · ${esc(step.location)}<small>${esc(step.reason)}</small></span></div>`).join("")}`);
     }
+    const appointments = (state.commitments || []).filter((c) => c.terms.participants.includes(a.id));
+    if (appointments.length) {
+      detail.insertAdjacentHTML("afterbegin", `<p class="detail-label">AGREED MEETINGS</p>${appointments.slice(-8).map((c) => {
+        const t = c.terms, minute = t.start_minute % 1440;
+        const when = `Day ${Math.floor(t.start_minute / 1440) + 1} · ${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+        return `<div class="plan-item"><time>${esc(when)}</time><span>${esc(t.task.replaceAll("_", " "))} · ${esc(t.place)}<small>${esc(c.status)} · ${t.duration_minutes}m · ${esc(t.participants.join(" & "))}</small></span></div>`;
+      }).join("")}`);
+    }
+    const conversation = (state.conversations || []).findLast((c) => c.participants.includes(a.id));
+    if (conversation) {
+      detail.insertAdjacentHTML("beforeend", `<p class="detail-label">LATEST CONVERSATION · ${esc(conversation.status)}</p>${conversation.transcript.map((turn) => `<p><strong>${esc(turn.speaker)}</strong>: ${esc(turn.speech)}</p>`).join("")}`);
+    }
     if (a.goals?.length)
       detail.insertAdjacentHTML(
         "afterbegin",
@@ -735,18 +747,16 @@ new ResizeObserver(resizeMap).observe(mapViewport);
 resizeMap();
 $("#export").addEventListener("click", async () => {
   try {
-    const data =
-      recording ||
-      (await fetch("/api/recording").then((r) => {
-        if (!r.ok) throw new Error("Could not save the recording.");
-        return r.json();
-      }));
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(data)], { type: "application/json" }),
-    );
+    const blob = recording
+      ? new Blob([JSON.stringify(recording)], { type: "application/json" })
+      : await fetch("/api/recording").then((r) => {
+          if (!r.ok) throw new Error("Could not save the complete recording. Check the server's save status.");
+          return r.blob();
+        });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `lantern-bay-step-${data.snapshots.at(-1).step}.json`;
+    a.download = `lantern-bay-step-${recording?.snapshots.at(-1).step ?? liveState.step}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast("Your village story has been saved.");
@@ -791,6 +801,18 @@ function validRecording(data) {
       Number.isInteger(s.day) &&
       Number.isFinite(s.minute) &&
       typeof s.time === "string" &&
+      (s.commitments === undefined || (Array.isArray(s.commitments) && s.commitments.every((c) =>
+        c && ["scheduled", "completed", "missed", "cancelled"].includes(c.status) &&
+        c.terms && Array.isArray(c.terms.participants) && c.terms.participants.length === 2 &&
+        c.terms.participants.every((id) => typeof id === "string") &&
+        typeof c.terms.task === "string" && typeof c.terms.place === "string" &&
+        Number.isInteger(c.terms.start_minute) && c.terms.start_minute >= 0 &&
+        Number.isInteger(c.terms.duration_minutes) && c.terms.duration_minutes > 0))) &&
+      (s.conversations === undefined || (Array.isArray(s.conversations) && s.conversations.every((c) =>
+        c && typeof c.status === "string" && Array.isArray(c.participants) &&
+        c.participants.every((id) => typeof id === "string") &&
+        Array.isArray(c.transcript) && c.transcript.length <= 6 && c.transcript.every((turn) =>
+          turn && typeof turn.speaker === "string" && typeof turn.speech === "string" && turn.speech.length <= 240)))) &&
       Array.isArray(s.events) &&
       Array.isArray(s.agents) &&
       s.agents.length > 0 &&
@@ -848,8 +870,6 @@ $("#import").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   try {
-    if (file.size > 50 * 1024 * 1024)
-      throw new Error("Choose a recording smaller than 50 MB.");
     const data = JSON.parse(await file.text());
     if (!validRecording(data))
       throw new Error("That file is not a supported Village Sim recording.");

@@ -1,14 +1,14 @@
 # Cognitive engine and hybrid mode
 
 Delivery contract for [issue #4](https://github.com/jimskin03/village-sim/issues/4).
-Phases 1 and 2 are implemented. Conversation, personal reflection, local
-knowledge and coordination below remain future stages.
+Phases 1–3 are implemented. Personal reflection, local knowledge and coordination
+remain future stages.
 
 | Stage | Deliverable | Status |
 | --- | --- | --- |
 | 1 | Persistent episodic/semantic memory and retrieval | Implemented |
 | 2 | Autonomous plans, replanning and cognition mode flag | Implemented |
-| 3 | Multi-turn conversations and negotiated commitments | Specified |
+| 3 | Multi-turn conversations and negotiated commitments | Implemented |
 | 4 | Individual reflection and evolving trust | Specified |
 | 5 | Local perception and information provenance | Specified |
 | 6 | Agent-organized gatherings and coordination | Specified |
@@ -80,8 +80,14 @@ These are display views, not archive deletion.
 
 Model context has up to twelve relevant memories (6,000 text characters total)
 and twelve recent memories (3,000 total). Observation memory views are bounded
-as well. Live replay retains the latest 256 frames. Saved story checkpoints
-still contain the entire resumable archive; headless exports retain exactly
+as well. The live replay buffer retains the latest 256 frames. A SQLite sidecar stores
+all frames and streams complete story exports using a stable read transaction,
+without holding the simulation lock during transfer. Atomic checkpoints reference
+the committed story ID and frame count; restart trims any uncheckpointed tail.
+Reset/resume create a new branch; old generations are pruned after checkpoint
+replacement. Temporary sessions use a temporary disk archive. Failed archive
+writes are reported and full exports fail rather than silently omit frames.
+Saved story checkpoints contain the entire resumable memory archive; headless exports retain exactly
 `steps + 1` bounded frames for the explicitly requested run.
 
 Archive storage and atomic checkpoint serialization still grow with experience.
@@ -101,7 +107,11 @@ result/mood/speech/promise slots while schedules choose activity/destination.
 Hybrid mode uses explicit `plan-v1` proposals. It offers craft work, rest, visits
 and the current routine. Shelter, sleep and festivals constrain the legal set.
 Rules continue while a plan is unavailable, a call fails or a proposal rejects.
-Accepted plans continue deterministically through temporary provider absence.
+Accepted plans continue deterministically through temporary provider errors and
+checkpoint restart/resume. Explicit UI disconnection or harness leave invalidates
+the active model plan, clears pending actions, and returns movement to rules on
+the next tick. Already accepted meetings remain scheduled; an in-progress
+conversation is interrupted. Late replies cannot undo disconnection.
 `generative` mode is reserved for later stages and is not accepted yet.
 
 ### Proposal contract
@@ -162,7 +172,8 @@ Automatic calls remain at least ten seconds apart, with thirty-second error
 backoff and thirty-second per-request timeout. Optional embedding and planning
 calls run sequentially in the background. Think bypasses spacing, not validation.
 
-Checkpoint schema 3 adds cognition mode and per-resident plans. Schema 2 migrates
+Checkpoint schema 4 adds conversations and commitments; schema 3 introduced
+cognition mode and per-resident plans. Schema 3 migrates with empty social history. Schema 2 migrates
 to rules with empty cognitive plans; schema 1 first receives memory metadata.
 Migration preserves input, identity, memory IDs/content and random state.
 Validation rejects malformed plans, invalid progress/revisions, inaccessible
@@ -172,27 +183,63 @@ Provider keys, connections, derived indexes and embedding caches are excluded.
 `cognition/planning.py` owns legality, proposal validation and plan construction;
 `Simulation` executes and records outcomes; `decisions.py` remains the fallback;
 `providers.py` adapts the configured completion API. The server coordinates calls
-outside the world lock. Separate conversation/reflection/perception modules and
-an engine coordinator remain work for subsequent stages.
+outside the world lock. `conversations.py` owns dialogue and commitments; reflection/perception and
+a larger engine coordinator remain work for subsequent stages.
 
-## Subsequent social cognition
+## Social cognition
 
-### Conversation and commitments (stage 3)
+### Conversation and commitments (stage 3, implemented)
 
-Start within the existing conversation range/cooldown when agents have a relevant
-memory or social goal and are available. Persist ID, participants, topic, status
-and transcript. Bound exchanges to six alternating turns, 240 characters per
-turn and one call per turn. Each speaker receives their own memories and the
-shared transcript, without the other's private memory. A failed call uses a
-deterministic turn. Interrupt when agents leave range or face a hazard; expire
-unfinished exchanges after eight simulation steps.
+In Hybrid mode, available residents within Manhattan distance two start a
+conversation for an unfinished social goal or a remembered promise. Each resident
+can join one conversation at a time, with an eight-step cooldown. Conversation
+participants pause travel while talking. Exchanges alternate between speakers,
+last at most six turns of 240 characters, and expire after eight simulation steps.
+Hazards, departure, leaving range, a due appointment, mode changes and explicit
+provider disconnection interrupt the exchange.
 
-Turns may propose, accept, counter or decline commitments specifying participants,
-place, task, start minute and duration. Require explicit acceptance of identical
-validated terms by both parties. Check availability, overlap and travel time.
-Update both schedules atomically and give both a promise memory. At meeting time,
-attempt travel and record attendance, cancellation or a missed promise. Speech
-alone cannot establish an agreement.
+Each turn uses `conversation-v1`: `conversation_id`, zero-based `turn`, `move`
+(`say`, `propose`, `counter`, `accept`, `decline`), `speech`, and `terms`. Terms are
+null for say/decline; otherwise they contain ordered `participants`, `place`,
+`task`, absolute `start_minute`, and `duration_minutes`. Allowed tasks are talk,
+repair_nets, repair_boat, gather_herbs and fish, each restricted to suitable places.
+Craft tasks require an appropriately skilled participant. Durations are 15–180
+minutes, in 15-minute increments; meetings must start within the next day and fit
+waking hours (06:00–23:00; craft work ends by 18:00). Validation checks reachability,
+travel time for both participants, and conflicts including travel between meetings.
+
+A proposal/counter expresses only its speaker's consent. Acceptance must come
+from the other participant and repeat the current terms exactly. After all checks,
+one shared commitment atomically supplies both schedules and both receive a promise
+memory. Speech alone has no scheduling authority. New counters replace prior terms.
+
+The current speaker uses their own configured provider, own persona, goals, daily
+plan, accepted meetings and twelve retrieved memories (6,000 characters). The shared
+transcript is visible to both; the partner's private memories and the omniscient
+journal are excluded. One call per turn uses the existing per-resident worker and
+10-second spacing/30-second error backoff. Unconnected residents, failed replies
+and turns during provider cooldown use deterministic replies. Calls do not block
+the clock; simulation identity, connection identity, conversation ID, turn index,
+availability and current terms are rechecked before adoption. A paused session may
+advance dialogue through provider replies or Think now without moving the clock.
+External harnesses receive their turn in observation `conversation` and submit the
+same contract through the authenticated action endpoint with the current `step`.
+
+Accepted appointments preempt individual plans when travel becomes due. Participants
+attempt travel using A*, spend the agreed window at the destination, and record
+joint attendance only when both are present during that window. Work remains
+world-controlled and requires the matching craft and attendance. Outcomes are
+completed, missed or cancelled, with memories for both residents. Weather, festivals,
+leaving the village or switching to Rules cancel outstanding appointments. Provider
+disconnection preserves already accepted commitments. These appointments are shown
+in the Plan tab alongside the latest transcript; observations expose a resident's
+own scheduled commitments. Snapshots include sixteen recent conversations and
+thirty-two commitments; checkpoints retain all social history.
+
+Checkpoint validation checks alternating turns, memory references, matching offers
+and acceptance, and rejects unilateral or missing appointments. Schema 1–3 saves
+migrate to schema 4 without manufacturing conversations. Personal trust updates,
+private knowledge provenance and group gatherings remain stages 4–6.
 
 ### Personal reflection and trust (stage 4)
 

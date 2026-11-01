@@ -12,10 +12,10 @@ import tempfile
 
 from .decisions import Action
 from .cognition.memory import make_memory, validate_memory
-from .cognition import planning
+from .cognition import planning, conversations
 from .simulation import Agent, PERSONAS, Simulation
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
@@ -74,8 +74,10 @@ def _migrate(data):
     """Upgrade older checkpoints without mutating the imported document."""
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int:
         raise ValueError("Unsupported session version")
-    if data["schema_version"] == 3:
+    if data["schema_version"] == 4:
         return data
+    if data["schema_version"] == 3:
+        return _migrate_conversations(copy.deepcopy(data))
     if data["schema_version"] == 2:
         return _migrate_planning(copy.deepcopy(data))
     if data["schema_version"] != 1:
@@ -109,6 +111,12 @@ def _migrate_planning(data):
         resident.setdefault("cognitive_plan", None)
         resident.setdefault("cognitive_revision", 0)
         resident.setdefault("replan_reason", "no_plan")
+    return _migrate_conversations(data)
+
+
+def _migrate_conversations(data):
+    data["state"].setdefault("conversations", [])
+    data["state"].setdefault("commitments", [])
     data["schema_version"] = SCHEMA_VERSION
     return data
 
@@ -329,6 +337,7 @@ def _restore(data):
     candidate.residents = restored
     candidate.agents = {aid: restored[aid] for aid in active}
     candidate.rng = rng
+    conversations.validate_state(candidate)
     if any(row["agent"] not in restored for row in state.get("daily_work", {}).values()):
         raise ValueError("Missing work history resident")
     candidate.pending = {}

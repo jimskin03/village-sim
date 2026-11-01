@@ -82,7 +82,7 @@ summaries link supporting event IDs and retain original episodes. All memories
 remain in checkpoints; snapshots contain bounded views. Conversations record symmetric relationship
 facts with an eight-step cooldown. Reflection records a daily village summary.
 The [cognition specification](cognition-spec.md) defines memory fields, ranking,
-checkpoint migration, implemented hybrid planning and subsequent social stages.
+checkpoint migration, implemented hybrid planning/conversations and subsequent social stages.
 
 Rules-mode external actions are a one-step voice override. Hybrid mode accepts
 explicit `plan-v1` proposals selecting several legal work/rest/visit actions.
@@ -176,20 +176,35 @@ sent back to viewers or recordings. Blank keys preserve an existing key only
 when updating the same endpoint. HTTP is accepted only for loopback providers;
 remote providers use HTTPS. Redirects are rejected to avoid forwarding keys.
 Only the UI adapter makes provider calls; the external harness API remains a
-separate optional route supporting voice slots and explicit plan proposals.
+separate optional route supporting voice slots, explicit plan proposals and
+conversation turns. Explicit disconnection invalidates the active model plan;
+already accepted meetings persist. Hybrid dialogue uses private speaker contexts,
+six alternating turns, and validated proposal/counter/acceptance before scheduling
+either resident. See the cognition specification for the conversation-v1 contract.
 
 ## Recording
 
 A recording contains `schema_version: 1`, `world`, and a `snapshots` array.
-Live recording retains the latest 256 bounded frames, initially starting at step
-zero. Tick, population, and world-event changes are recorded. Play/pause,
-speed and provider attachment alone do not add frames. A headless run produces
-exactly `steps + 1` snapshots. Recordings are immutable viewing history; import
-does not mutate the live world. The viewer validates structure and accepts files
-up to 50 MB. Recording frames stay in RAM; complete resumable sessions persist
-atomically on disk unless persistence is disabled. Archive serialization grows
-with experience. Checkpoint schema 3 includes cognitive plans and memories;
-schemas 1 and 2 migrate before validation, retaining Rules mode.
+The live buffer retains the latest 256 bounded frames. All frames are stored in
+a SQLite sidecar (`<state-file>.recording.sqlite3`) and exported using a stable
+read transaction outside the simulation lock. Normal restarts retain the archive;
+checkpoint metadata identifies the committed story and frame count so an interrupted
+write cannot replay an uncommitted future. Reset and imported-story resume start a
+new replay branch. Without persistence, a temporary disk archive lasts for the
+server process. Archive failure is visible and incomplete export returns HTTP 503.
+
+Tick, population, world-event changes and accepted provider/harness conversation
+turns are recorded. Playback controls and provider attachment alone do not add
+frames. Headless exports contain exactly `steps + 1` frames. Imports validate the
+viewer structure without replacing the live world; resuming requires a separately
+validated checkpoint. Large stories need sufficient browser memory; the full export
+is downloaded as a Blob without parsing its frames first. The session-resume HTTP
+body remains limited to 50 MB, independently of replay-file size.
+
+Checkpoint schema 4 includes complete cognitive memories, plans, transcripts and
+commitments. Schemas 1–3 migrate before validation, retaining the saved thinking
+style (schemas 1–2 default to Rules). Stop the server before moving its checkpoint
+and SQLite sidecar together. Archive storage grows with experience.
 Replay/snapshot schema remains 1.
 
 ## UI model configuration

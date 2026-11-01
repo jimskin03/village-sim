@@ -227,7 +227,10 @@ class HybridProviderTests(unittest.TestCase):
                 sim.tick()
                 self.session.schedule_brains()
         self.assertEqual(mara.destination, "shore")
-        self.assertEqual(self.session.brains["mara"].requests, 1)
+        self.wait()
+        contexts = [json.loads(call["body"]["messages"][1]["content"]) for call in self.provider.calls]
+        self.assertEqual(sum(c.get("decision_contract") == "plan-v1" for c in contexts), 1)
+        self.assertTrue(all(c.get("contract") == "conversation-v1" for c in contexts[1:]))
         self.assertEqual(sim.pantry["fish"], 0)
 
     def test_delayed_plan_is_discarded_after_meaningful_new_information(self):
@@ -263,6 +266,33 @@ class HybridProviderTests(unittest.TestCase):
         self.provider.release.set()
         self.wait()
         self.assertIsNone(self.session.sim.agents["mara"].cognitive_plan)
+
+    def test_disconnect_invalidates_plan_and_discards_a_delayed_replacement(self):
+        self.connect()
+        self.wait()
+        mara = self.session.sim.agents["mara"]
+        self.provider.release.clear()
+        self.provider.received.clear()
+        with self.session.condition:
+            brain = self.session.brains["mara"]
+            brain.next_call = 0
+            brain.force = True
+            self.session.schedule_brains()
+        self.assertTrue(self.provider.received.wait(timeout=2))
+        memories = copy.deepcopy(mara.memory)
+        revision = mara.cognitive_revision
+        with self.session.condition:
+            self.session.disconnect_brain("mara")
+        self.assertEqual(mara.cognitive_plan["status"], "invalidated")
+        self.assertEqual(mara.cognitive_plan["reason"], "provider_disconnected")
+        self.assertGreater(mara.cognitive_revision, revision)
+        self.assertEqual(mara.memory, memories)
+        self.assertIsNone(mara.provider)
+        self.provider.release.set()
+        self.wait()
+        self.session.sim.tick()
+        self.assertEqual(mara.destination, "jetty")
+        self.assertEqual(mara.cognitive_plan["status"], "invalidated")
 
     def test_failed_model_falls_back_without_inventing_resources(self):
         self.provider.content = '{"contract":"plan-v1","goal":"Fly","steps":[]}'

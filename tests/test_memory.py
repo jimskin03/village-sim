@@ -172,7 +172,7 @@ class MemoryIntegrationTests(unittest.TestCase):
         before = copy.deepcopy(legacy)
         migrated = restore_session(legacy)
         self.assertEqual(legacy, before)
-        self.assertEqual(export_session(migrated)["schema_version"], 3)
+        self.assertEqual(export_session(migrated)["schema_version"], 4)
         self.assertFalse(hasattr(migrated, "seen_texts"))
         for aid, resident in legacy["residents"].items():
             memories = migrated.residents[aid].memory

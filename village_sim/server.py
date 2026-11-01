@@ -7,6 +7,7 @@ import json
 import mimetypes
 from pathlib import Path
 import secrets
+import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Condition, Thread
 import time
@@ -16,8 +17,10 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 from . import providers
 from .cognition.planning import CONTRACT
 from .cognition.embeddings import EmbeddingCache
+from .cognition import conversations
 from .simulation import Simulation
 from .persistence import export_session, read_session, restore_session, write_session
+from .recording import RecordingArchive
 
 STATIC = Path(__file__).parent / "static"
 
@@ -96,7 +99,10 @@ class Session:
         self.tokens: dict[str, str] = {}
         self.brains: dict[str, Brain] = {}
         self.workers: set[str] = set()
-        self.recording = [self.sim.snapshot()]
+        self.archive = RecordingArchive(self.state_path, saved.get("recording") if saved else None)
+        if not self.archive.count:
+            self.archive.append(self.sim.snapshot())
+        self.recording = self.archive.recent()
         self.thread = Thread(target=self._run, daemon=True)
         self.persist()
 
@@ -107,25 +113,32 @@ class Session:
             "interval": self.interval,
             "revision": self.revision,
             "brains": {aid: brain.public() for aid, brain in self.brains.items()},
-            "persistence_error": self.persistence_error,
+            "persistence_error": ("The replay archive could not be written completely. Check disk space before starting a new story."
+                                  if self.archive.failed else self.persistence_error),
         }
 
-    def checkpoint(self):
+    def checkpoint(self, *, recording=False):
         return {
             **export_session(self.sim),
             "settings": {"interval": self.interval, "paused": self.paused},
+            **({"recording": self.archive.reference()} if recording else {}),
         }
 
     def persist(self):
-        if self.state_path:
-            try:
-                write_session(self.state_path, self.checkpoint())
-                self.persistence_error = None
-            except OSError:
-                self.persistence_error = "The village could not be saved to disk. Check the state-file path and available space."
+        try:
+            if self.state_path:
+                write_session(self.state_path, self.checkpoint(recording=True))
+            self.archive.prune()
+            self.persistence_error = None
+        except (OSError, sqlite3.Error):
+            self.persistence_error = "The village could not be saved to disk. Check the state-file path and available space."
 
     def resume(self, data):
         candidate = restore_session(data)
+        try:
+            previous = self.archive.start(candidate.snapshot())
+        except (OSError, sqlite3.Error):
+            raise ValueError("The resumed replay could not be saved to disk") from None
         # Validate and write first: neither malformed input nor a failed disk write
         # may replace the running village.
         if self.state_path:
@@ -133,8 +146,10 @@ class Session:
                 write_session(self.state_path, {
                     **export_session(candidate),
                     "settings": {"interval": self.interval, "paused": True},
+                    "recording": self.archive.reference(),
                 })
             except OSError:
+                self.archive.select(previous)
                 raise ValueError("The resumed village could not be saved to disk") from None
         self.sim = candidate
         self.paused = True
@@ -144,11 +159,17 @@ class Session:
         self.publish(record=False)
 
     def publish(self, record=True):
-        self.persist()
         self.revision += 1
         if record:
-            self.recording.append(self.sim.snapshot())
+            snapshot = self.sim.snapshot()
+            if not self.archive.failed:
+                try:
+                    self.archive.append(snapshot)
+                except (OSError, sqlite3.Error):
+                    self.archive.failed = True
+            self.recording.append(snapshot)
             del self.recording[:-256]
+        self.persist()
         self.condition.notify_all()
 
     def _run(self):
@@ -190,14 +211,29 @@ class Session:
 
     def disconnect_brain(self, aid):
         if self.brains.pop(aid, None):
-            self.sim.agents[aid].provider = None
-            self.sim.pending.pop(aid, None)
+            self.detach(aid)
+
+    def detach(self, aid):
+        agent = self.sim.agents[aid]
+        agent.provider, agent.provider_until = None, 0
+        self.sim.pending.pop(aid, None)
+        self.tokens.pop(aid, None)
+        self.sim.request_replan(aid, "provider_disconnected")
+        conversation = conversations.active(self.sim, aid)
+        if conversation:
+            conversations.finish(self.sim, conversation, "interrupted", "provider disconnected")
 
     def prepare_brains(self):
         for aid, brain in self.brains.items():
             agent = self.sim.agents[aid]
             agent.provider = brain.config.model[:60]
             agent.provider_until = self.sim.step + 9
+            if (self.sim.cognition_mode == "hybrid" and aid not in self.workers
+                    and time.monotonic() < brain.next_call and conversations.context(self.sim, aid)):
+                try:
+                    conversations.fallback(self.sim, aid)
+                except ValueError:
+                    pass
             if self.sim.cognition_mode == "rules" and brain.action and self.sim.step < brain.until:
                 action = dict(brain.action)
                 if not brain.speak:
@@ -220,21 +256,59 @@ class Session:
             return
         for aid, brain in self.brains.items():
             hybrid = self.sim.cognition_mode == "hybrid"
+            conversation = conversations.active(self.sim, aid) if hybrid else None
+            turn = conversations.context(self.sim, aid) if conversation else None
             if (
                 aid in self.workers
-                or (hybrid and not self.sim.agents[aid].replan_reason and not brain.force)
+                or (conversation is not None and turn is None)
+                or (hybrid and conversation is None and not self.sim.agents[aid].replan_reason and not brain.force)
                 or (not hybrid and self.sim.step < brain.next_step)
                 or time.monotonic() < brain.next_call
             ):
                 continue
-            observation = self.sim.observe(aid)
+            observation = turn or self.sim.observe(aid)
             brain.status = "thinking"
             brain.requests += 1
             brain.force = False
             self.workers.add(aid)
             Thread(
-                target=self._plan, args=(aid, brain, self.sim, observation), daemon=True
+                target=self._conversation if turn else self._plan, args=(aid, brain, self.sim, observation), daemon=True
             ).start()
+
+    def _conversation(self, aid, brain, sim, request):
+        action, error = None, None
+        try:
+            action = providers.converse(brain.config, request)
+        except Exception:
+            error = "The conversation provider failed. A rule-based reply was used."
+        with self.condition:
+            self.workers.discard(aid)
+            if not self.running or self.sim is not sim or self.brains.get(aid) is not brain:
+                self.condition.notify_all()
+                self.schedule_brains()
+                return
+            current = conversations.context(sim, aid)
+            if (current is None or current["conversation_id"] != request["conversation_id"]
+                    or current["turn"] != request["turn"]):
+                brain.status = "waiting"
+            else:
+                try:
+                    if action is not None:
+                        conversations.apply_turn(sim, aid, action)
+                        brain.decisions += 1
+                    else:
+                        conversations.fallback(sim, aid)
+                except ValueError:
+                    error = "The proposed conversation turn is no longer valid. A rule-based reply was used."
+                    try:
+                        conversations.fallback(sim, aid)
+                    except ValueError:
+                        pass
+                brain.status = "error" if error else "ready"
+            brain.error = error
+            brain.next_call = time.monotonic() + (30 if error else 10)
+            self.publish()
+            self.schedule_brains()
 
     def _plan(self, aid, brain, sim, observation):
         action, error = None, None
@@ -311,10 +385,13 @@ class Session:
 
     def close(self):
         with self.condition:
+            if not self.running:
+                return
             self.persist()
             self.running = False
             self.brains.clear()
             self.condition.notify_all()
+            self.archive.close()
 
 
 class Server(ThreadingHTTPServer):
@@ -368,6 +445,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/stream":
                 return self.stream()
+            if path == "/api/recording":
+                return self.send_recording()
             if path.startswith("/api/"):
                 with self.session.condition:
                     result, status = self.read_api(path)
@@ -386,15 +465,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.session.state(), 200
         if path == "/api/world":
             return self.session.sim.world.config, 200
-        if path == "/api/recording":
-            # Recorded frames are immutable; copy the index under the lock,
-            # then serialize and send without holding up the village clock.
-            return {
-                "schema_version": 1,
-                "world": self.session.sim.world.config,
-                "snapshots": list(self.session.recording),
-                "session": self.session.checkpoint(),
-            }, 200
         parts = path.strip("/").split("/")
         if (
             len(parts) == 4
@@ -412,6 +482,32 @@ class Handler(BaseHTTPRequestHandler):
             self.session.sim.agents[aid].provider_until = self.session.sim.step + 8
             return self.session.sim.observe(aid, memory_query=query), 200
         return {"error": "Unknown endpoint"}, 404
+
+    def send_recording(self):
+        try:
+            with self.session.condition:
+                checkpoint = self.session.checkpoint()
+                connection, frames = self.session.archive.reader()
+        except (ValueError, OSError, sqlite3.Error):
+            return self.send({"error": "The complete replay archive is unavailable. Check disk space and the archive file."}, 503)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            prefix = json.dumps({"schema_version": 1, "world": checkpoint["world"]}, ensure_ascii=False)
+            self.wfile.write((prefix[:-1] + ', "snapshots":[').encode())
+            for index, (frame,) in enumerate(frames):
+                self.wfile.write((("," if index else "") + frame).encode())
+            self.wfile.write(b'], "session":')
+            for chunk in json.JSONEncoder(ensure_ascii=False).iterencode(checkpoint):
+                self.wfile.write(chunk.encode())
+            self.wfile.write(b"}")
+        finally:
+            connection.close()
 
     def stream(self):
         self.send_response(200)
@@ -540,10 +636,9 @@ class Handler(BaseHTTPRequestHandler):
                     if aid in sim.agents
                 }
             elif action == "reset":
-                session.brains.clear()
-                session.sim = Simulation(len(sim.agents), sim.seed, cognition_mode=sim.cognition_mode)
-                session.tokens.clear()
-                session.recording = [session.sim.snapshot()]
+                paused = session.paused
+                session.resume(export_session(Simulation(len(sim.agents), sim.seed, cognition_mode=sim.cognition_mode)))
+                session.paused = paused
             elif action == "cognition":
                 sim.set_cognition_mode(data.get("mode"))
                 for brain in session.brains.values():
@@ -606,12 +701,14 @@ class Handler(BaseHTTPRequestHandler):
             if action == "action":
                 sim.submit(aid, data)
                 agent.provider_until = sim.step + 8
-                session.persist()
+                if data.get("contract") == conversations.CONTRACT:
+                    session.publish()
+                    session.schedule_brains()
+                else:
+                    session.persist()
                 return {"accepted": True, "for_step": sim.step + 1}
             if action == "leave":
-                agent.provider = None
-                sim.pending.pop(aid, None)
-                session.tokens.pop(aid, None)
+                session.detach(aid)
                 session.publish(record=False)
                 return {"detached": True}
         raise ValueError("Unknown endpoint")

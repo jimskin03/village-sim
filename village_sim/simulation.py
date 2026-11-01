@@ -12,7 +12,7 @@ import random
 from typing import Callable
 
 from .cognition.memory import MemoryStore, memory_view
-from .cognition import planning
+from .cognition import planning, conversations
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -124,6 +124,8 @@ class Simulation:
         self.rng = random.Random(seed)
         self.decision = decision
         self.cognition_mode = cognition_mode
+        self.conversations: list[dict] = []
+        self.commitments: list[dict] = []
         self._memory_stores: dict[str, MemoryStore] = {}
         self.step = 0
         self.weather = "clear"
@@ -206,6 +208,7 @@ class Simulation:
         if mode == self.cognition_mode:
             return
         self.cognition_mode = mode
+        conversations.update(self, advance=False)
         self.pending.clear()
         for agent in self.residents.values():
             agent.cognitive_revision += 1
@@ -243,6 +246,8 @@ class Simulation:
             self._refresh_goals(agent)
             if changed:
                 self.request_replan(agent.id, "population_changed")
+        if changed:
+            conversations.update(self, advance=False)
 
     def _social_goal(self, agent: Agent) -> dict | None:
         others = [other for other in self.agents.values() if other.id != agent.id]
@@ -357,6 +362,9 @@ class Simulation:
             "decision_contract": planning.CONTRACT if self.cognition_mode == "hybrid" else "voice-v1",
             "cognitive_revision": agent.cognitive_revision,
             "replan_reason": agent.replan_reason,
+            "conversation": conversations.context(self, aid),
+            "commitments": [copy.deepcopy(c) for c in self.commitments
+                            if c["status"] == "scheduled" and aid in c["terms"]["participants"]],
             "nearby": [
                 {"id": a.id, "name": a.name, "activity": a.activity} for a in nearby
             ],
@@ -389,6 +397,9 @@ class Simulation:
             raise ValueError("Unknown villager")
         if type(data.get("step")) is not int or data["step"] != self.step:
             raise ValueError("Decision is stale; fetch a fresh observation")
+        if data.get("contract") == conversations.CONTRACT:
+            conversations.apply_turn(self, aid, data)
+            return
         observation = self.observe(aid)
         if data.get("contract") == planning.CONTRACT:
             if self.cognition_mode != "hybrid":
@@ -446,6 +457,9 @@ class Simulation:
 
     def adopt_model_decision(self, aid: str, action: dict):
         """Adopt an explicit hybrid plan or fit legacy voice slots to the rules."""
+        if action.get("contract") == conversations.CONTRACT:
+            conversations.apply_turn(self, aid, action)
+            return action
         observation = self.observe(aid)
         if action.get("contract") == planning.CONTRACT:
             self.submit(aid, {**action, "step": self.step, "revision": observation["cognitive_revision"]})
@@ -504,6 +518,7 @@ class Simulation:
             )
         else:
             raise ValueError("Unknown event; choose storm, festival, or clear")
+        conversations.update(self, advance=False)
 
     def tick(self):
         previous_day = self.day
@@ -538,7 +553,11 @@ class Simulation:
                 self._refresh_goals(agent)
             if previous_hour != self.minute // 60 and self.minute // 60 in (0, 6, 10, 13, 15, 18, 21, 23):
                 self.request_replan(agent.id, "schedule_changed")
+        conversations.update(self)
         for agent in self.agents.values():
+            if conversations.active(self, agent.id):
+                agent.activity = "in conversation"
+                continue
             observation = self.observe(agent.id)
             action = self.pending.pop(agent.id, None)
             # The rules choose where the body goes. A connected brain can still
@@ -566,6 +585,11 @@ class Simulation:
                 except ValueError:
                     self.request_replan(agent.id, "action_unavailable")
                     action = self._with_voice(agent, observation, None)
+            meeting = conversations.meeting_action(self, agent.id)
+            if meeting:
+                if planned:
+                    self.request_replan(agent.id, "commitment_due")
+                action, planned = meeting, False
             if action.mood in observation["mood_options"]:
                 agent.mood = action.mood
             agent.thought = action.thought
@@ -593,6 +617,8 @@ class Simulation:
                     f"{agent.name}: “{action.speech}”", "conversation", [agent.id]
                 )
             productive = not planned or cognitive["steps"][cognitive["index"]]["action"] in ("work", "routine")
+            if meeting:
+                productive = False  # Shared work runs after both residents move.
             if arrived and productive and self.step - agent.last_work >= 4 and self._result_options(agent, action.place):
                 agent.last_work = self.step
                 self._work(agent, action.place, action.result)
@@ -607,6 +633,7 @@ class Simulation:
                         self.request_replan(agent.id, "plan_completed")
                     else:
                         cognitive["remaining"] = cognitive["steps"][cognitive["index"]]["duration_minutes"] // 15
+        conversations.attend(self)
         self._converse()
         return self.snapshot()
 
@@ -760,6 +787,9 @@ class Simulation:
                 return
 
     def _converse(self):
+        if self.cognition_mode == "hybrid":
+            conversations.start_nearby(self)
+            return
         villagers = list(self.agents.values())
         pairs = [(first, other) for i, first in enumerate(villagers) for other in villagers[i + 1:]]
         def priority(pair):
@@ -812,6 +842,8 @@ class Simulation:
             "reflections": copy.deepcopy(self.reflections[-7:]),
             "visitor": copy.deepcopy(self.visitor),
             "work_summaries": copy.deepcopy(list(self.daily_work.values())[-32:]),
+            "conversations": copy.deepcopy(self.conversations[-16:]),
+            "commitments": copy.deepcopy(self.commitments[-32:]),
             "agents": [self.agent_view(a) for a in self.agents.values()],
             "events": memory_view(self.events[-80:], limit=80, characters=24000),
             "event_count": self.next_event_id,

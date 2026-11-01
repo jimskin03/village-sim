@@ -11,6 +11,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .cognition.memory import memory_view
 from .cognition.planning import CONTRACT, validate_proposal
+from .cognition import conversations
 
 
 class ProviderError(Exception):
@@ -249,6 +250,32 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         raise ProviderError(
             "The model did not return a valid decision. Try a model that follows JSON instructions."
         ) from None
+
+
+def converse(config: ProviderConfig, context: dict) -> dict:
+    instructions = (
+        "Speak as this villager using only your own supplied memories and the shared transcript. "
+        "Consider your goals, daily plan and accepted commitments independently. Negotiate a meeting "
+        "with propose, counter, accept or decline; use say for ordinary conversation. "
+        "Return JSON with contract 'conversation-v1', the supplied conversation_id and turn, move, "
+        "speech (1–240 characters), and terms (null for say/decline). Terms must contain participants "
+        "in the supplied order, place, task, start_minute (absolute game minutes), duration_minutes. "
+        "Use a listed task/place, 15–180 minutes in multiples of 15, within the next day. "
+        "Allow travel time. Talk between 06:00 and 23:00; craft work between 06:00 and 18:00. "
+        "Acceptance must repeat exactly the latest partner offer. Counter to change any term. "
+        "Speech alone never creates a commitment. Do not invent past events or agree for your partner."
+    )
+    try:
+        payload = _complete(config, {"model": config.model, "messages": [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+        ]})
+        return conversations.validate_turn(_parse_decision(_message_text(payload["choices"][0])), context)
+    except HTTPError as error:
+        error.close()
+        raise ProviderError("The conversation provider rejected the request. A rule-based reply will be used.") from None
+    except (ProviderError, URLError, OSError, TimeoutError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+        raise ProviderError("The conversation provider could not produce a valid turn. A rule-based reply will be used.") from None
 
 
 def _complete(config: ProviderConfig, body: dict, endpoint="/chat/completions", max_bytes=256 * 1024) -> dict:

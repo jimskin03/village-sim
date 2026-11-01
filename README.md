@@ -85,16 +85,34 @@ can surface after hundreds of chores. It works without embeddings or API calls;
 optionally set an **Embedding model** under Connection details to generate
 semantic vectors through the same provider. Results are cached, and embedding
 failures fall back to keyword recall. Existing saves migrate automatically to
-checkpoint version 3 and retain Rules mode. The [cognition specification](docs/cognition-spec.md)
-describes implemented memory/planning and the remaining social cognition stages.
+checkpoint version 4 and retain their thinking style (older saves default to Rules). The [cognition specification](docs/cognition-spec.md)
+describes memory, planning and conversations, plus the remaining reflection, perception and coordination stages.
 
 Live memory views and replay frames have fixed budgets: the viewer shows up to
-64 recent memories per resident and the latest 256 live frames. The total memory
-count includes the complete archive, retained in every resumable checkpoint.
+64 recent memories per resident and the server keeps 256 frames in memory. Every
+replay frame is archived on disk, and Save this story exports the full history.
+The archive lives beside the checkpoint as `session.json.recording.sqlite3`;
+keep both files when moving a saved village. Normal restarts retain replay history.
+Reset and imported-story resume start a new replay branch. With `--no-persist`,
+a temporary disk archive lasts until the server closes. Archive failures appear
+in the save status and prevent incomplete exports. Disk use grows with the story;
+opening a large exported story also needs enough browser memory. The total memory
+count includes the complete memory archive, retained in every resumable checkpoint.
+
+Hybrid villagers can also hold six-turn conversations using their separate
+memories and providers. They propose, counter, accept or decline meetings;
+matching agreement adds an appointment to both schedules. Villagers travel to
+accepted meetings, and remember attendance, missed meetings or cancellations.
+Open the Plan tab to see appointments and the latest transcript. Unconnected
+villagers and failed model calls use deterministic replies. Rules mode keeps
+its existing dialogue.
 
 Keys stay in server memory and are excluded from recordings and browser storage.
 Reconnect after restarting/resetting the server. **Disconnect** keeps the
-villager's identity and memories. You can also connect an external harness using
+villager's identity and memories, invalidates their active model plan, and returns
+movement to rules on the next tick. Accepted meetings remain obligations. Temporary
+provider errors and restarting a saved village preserve accepted plans and meetings.
+You can also connect an external harness using
 the [agent API](docs/agent-harness.md), also published at `/docs` and linked in About.
 
 ## Run without a browser
@@ -120,11 +138,13 @@ village-sim --headless
 
 - `village_sim/world.py`: JSON world, walkable geometry, A* pathfinding.
 - `village_sim/cognition/memory.py`: persistent episodic/semantic records and retrieval.
+- `village_sim/cognition/conversations.py`: private dialogue contexts, negotiation and appointments.
 - `village_sim/cognition/planning.py`: legal choices and validated autonomous plans.
 - `village_sim/cognition/embeddings.py`: optional bounded semantic-recall cache.
 - `village_sim/simulation.py`: clock, personas, memory, relationships, work and events.
 - `village_sim/decisions.py`: replaceable `decide(agent, observation) -> Action`.
 - `village_sim/providers.py`: optional OpenAI-compatible model adapter.
+- `village_sim/recording.py`: disk replay archive and stable export readers.
 - `village_sim/server.py`: local HTTP server, async planning, SSE and harness API.
 - `village_sim/static/`: buildless HTML/CSS/JS viewer over the original background.
 
@@ -153,6 +173,9 @@ embedding fallback, checkpoint migration, absent residents and disk restart.
 Planning tests include a mock-model Mara visiting Tom because she remembers his
 request, multi-step execution, interruptions and stale replies. Long-duration
 checks cover 10,000 episodes, indexed retrieval and transmitted memory budgets.
+Conversation tests cover independent model contexts, counteroffers, matching acceptance,
+attendance, interruption, fallback and migration. Recording tests cover complete exports,
+restart, reset, stable readers and disk failures.
 GitHub Actions runs the suite on Python 3.11, 3.13 and 3.14 for pushes and pull requests.
 
 This is a local first demo: rule-based dialogue and outcomes use bounded,
