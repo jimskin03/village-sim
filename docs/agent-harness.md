@@ -186,3 +186,13 @@ provider tokens and connections. Provider keys never enter checkpoints.
 Live runs checkpoint to `.village-sim/session.json` after each step/control and
 resume automatically on launch. Use `--state-file PATH` or `--no-persist` to
 choose a different file or disable persistence.
+
+## Protected villages and visitors
+
+When visitors are enabled, the server binds beyond loopback, or
+`VILLAGE_SIM_OPERATOR_TOKEN` is set, `join` and `brain` (like the village
+controls) also need the `X-Operator-Token` header. `examples/harness.py` sends
+it from that environment variable. Outside agents that should arrive as
+strangers rather than drive a resident use the separate
+[visiting agents API](visiting-agents.md).
+

@@ -5,6 +5,7 @@ Run the village server first, then `python3 examples/harness.py`.
 
 import argparse
 import json
+import os
 import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -26,6 +27,9 @@ def main():
 
     def request(endpoint, body=None):
         headers = {"Content-Type": "application/json"}
+        if endpoint == "join" and os.environ.get("VILLAGE_SIM_OPERATOR_TOKEN"):
+            # Needed when the village is protected (visitors enabled or a public bind).
+            headers["X-Operator-Token"] = os.environ["VILLAGE_SIM_OPERATOR_TOKEN"]
         if token:
             headers["Authorization"] = "Bearer " + token
         req = Request(

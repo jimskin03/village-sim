@@ -305,6 +305,39 @@
         </div>
       </section>
       <section
+        id="visitors-panel"
+        class="map-panel"
+        aria-labelledby="visitors-title"
+        hidden
+      >
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">TRAVELLERS AT THE GUEST COTTAGE</p>
+            <h2 id="visitors-title">Visitors</h2>
+          </div>
+          <button
+            class="icon-button panel-close"
+            data-panel-close
+            aria-label="Close visitors"
+          >
+            <svg><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="panel-body" tabindex="0" aria-label="Visiting agents">
+          <p id="visitor-status" class="visitor-status"></p>
+          <div class="visitor-controls">
+            <button data-visitor-action="enable">Welcome visitors</button
+            ><button data-visitor-action="disable" title="Kill switch: closes the village and sends every visitor away">Close to visitors</button
+            ><button data-visitor-action="revoke_all">Revoke all passes</button>
+          </div>
+          <h3 class="visitor-heading">In the village</h3>
+          <div id="visitor-list"></div>
+          <h3 class="visitor-heading">Visitor ledger</h3>
+          <p class="empty-note">Every visitor action and how the village received it. Outcomes only; no judgement.</p>
+          <div id="visitor-ledger"></div>
+        </div>
+      </section>
+      <section
         id="events-panel"
         class="map-panel"
         aria-labelledby="events-title"
@@ -381,6 +414,13 @@
           aria-expanded="false"
         >
           <svg><use href="#i-event" /></svg><span>Events</span>
+        </button>
+        <button
+          data-panel="visitors-panel"
+          aria-controls="visitors-panel"
+          aria-expanded="false"
+        >
+          <svg><use href="#i-people" /></svg><span>Visitors</span>
         </button>
       </nav>
     </main>

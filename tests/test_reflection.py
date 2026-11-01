@@ -205,7 +205,7 @@ class ReflectionTests(unittest.TestCase):
         restored = restore_session(saved)
         self.assertEqual(saved, original)
         self.assertEqual(restored.commitments[0]["together"], True)
-        self.assertEqual(export_session(restored)["schema_version"], 6)
+        self.assertEqual(export_session(restored)["schema_version"], 7)
 
     def test_newer_broken_promise_retires_a_helper_insight(self):
         sim = Simulation(6, cognition_mode="hybrid")

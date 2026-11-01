@@ -121,6 +121,27 @@ provider errors and restarting a saved village preserve accepted plans and meeti
 You can also connect an external harness using
 the [agent API](docs/agent-harness.md), also published at `/docs` and linked in About.
 
+## Visiting agents
+
+Outside programs can visit Lantern Bay as strangers: they register, walk in from
+the guest cottage, and talk, suggest, spread rumors, sway moods, nudge plans,
+bring gifts, help with repairs or sabotage supplies. Every effect is bounded by
+the world rules, resisted or accepted by a documented deterministic receptivity
+rule, tagged with its source, and listed in a public, neutral ledger. Residents
+are unchanged and the feature is **off by default**.
+
+```bash
+export VILLAGE_SIM_OPERATOR_TOKEN='<OPERATOR_TOKEN>'   # optional; otherwise one is printed
+python3 -m village_sim --visitors
+python3 examples/visitor_harness.py --mode gentle      # or --mode hostile
+```
+
+Open **Visitors** in the dock to welcome visitors, close the village to them
+(kill switch), revoke every pass or expel one visitor. Enabling visitors or
+binding to a non-local host requires the operator token for village controls.
+See the [visiting agents guide](docs/visiting-agents.md) for endpoints, limits,
+receptivity and deployment notes.
+
 ## Run without a browser
 
 One step is 15 game minutes; 96 steps make one full day. The initial time is 18:00.
@@ -152,6 +173,7 @@ village-sim --headless
 - `village_sim/decisions.py`: replaceable `decide(agent, observation) -> Action`.
 - `village_sim/providers.py`: optional OpenAI-compatible model adapter.
 - `village_sim/recording.py`: disk replay archive and stable export readers.
+- `village_sim/visitors.py`: visiting agents, receptivity, bounded effects and the ledger.
 - `village_sim/server.py`: local HTTP server, async planning, SSE and harness API.
 - `village_sim/static/`: buildless HTML/CSS/JS viewer over the original background.
 
