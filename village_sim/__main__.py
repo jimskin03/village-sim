@@ -28,6 +28,8 @@ def main():
     parser.add_argument("--state-file", type=Path, help="checkpoint path (live default: .village-sim/session.json)")
     parser.add_argument("--no-persist", action="store_true", help="start fresh and disable automatic disk saves")
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--visitors", action="store_true",
+                        help="welcome visiting agents (requires the operator token for controls)")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
         "--interval",
@@ -78,7 +80,8 @@ def main():
 
         state_path = None if args.no_persist else args.state_file or Path(".village-sim/session.json")
         try:
-            serve(args.host, args.port, args.agents, args.seed, args.interval, state_path, cognition_mode=args.cognition)
+            serve(args.host, args.port, args.agents, args.seed, args.interval, state_path,
+                  cognition_mode=args.cognition, visitors_enabled=args.visitors)
         except (OSError, ValueError) as error:
             parser.error(str(error))
 

@@ -18,6 +18,7 @@ _IMPORTANCE = {
     "promise": 0.95, "insight": 0.9, "trust": 0.88, "reflection": 0.85, "goal": 0.8,
     "supper": 0.75, "weather": 0.7, "festival": 0.7, "conversation": 0.65,
     "work_summary": 0.5, "arrival": 0.4, "work": 0.3, "activity": 0.15,
+    "visitor_witness": 0.75, "visitor_influence": 0.7, "visitor_speech": 0.6,
 }
 _STOPWORDS = frozenset(
     "a an and are as at be by for from has have i in is it of on or that the "

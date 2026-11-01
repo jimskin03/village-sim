@@ -8,6 +8,13 @@ const esc = (value) =>
         c
       ],
   );
+// Visitor words arrive wrapped in fixed delimiters; show them as quotations.
+// The text is escaped first, and visitors cannot type < or >, so only the
+// server's own delimiters become markup.
+const storyText = (value) =>
+  esc(value)
+    .replaceAll("&lt;&lt;visitor-speech&gt;&gt;", '<q class="visitor-quote">')
+    .replaceAll("&lt;&lt;/visitor-speech&gt;&gt;", "</q>");
 const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 let state = null,
   liveState = null,
@@ -82,13 +89,24 @@ function toast(message) {
     $("#toast").hidden = true;
   }, 4500);
 }
-async function post(path, data) {
+async function post(path, data, retried = false) {
+  const headers = { "Content-Type": "application/json" };
+  const operator = sessionStorage.getItem("village-operator-token");
+  if (operator) headers["X-Operator-Token"] = operator;
   const response = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(data),
   });
   const result = await response.json();
+  if (response.status === 401 && result.operator_token_required && !retried) {
+    sessionStorage.removeItem("village-operator-token");
+    const entered = window.prompt("This village is protected. Enter the operator token printed in the server console:");
+    if (entered && entered.trim()) {
+      sessionStorage.setItem("village-operator-token", entered.trim());
+      return post(path, data, true);
+    }
+  }
   if (!response.ok)
     throw new Error(
       result.error || "The village could not complete that request.",
@@ -197,6 +215,7 @@ function render(next) {
   renderCards();
   renderDetails();
   renderJournal();
+  renderVisitors();
   connectionLabel();
   villageSound.follow(state);
 }
@@ -234,9 +253,10 @@ function renderStateMarkers() {
 }
 function renderSprites() {
   const container = $("#villagers");
-  container.querySelectorAll(".sprite").forEach((el) => {
+  container.querySelectorAll(".sprite:not(.visitor-sprite)").forEach((el) => {
     if (!state.agents.some((a) => a.id === el.dataset.id)) el.remove();
   });
+  renderVisitorSprites(container);
   state.agents.forEach((a) => {
     let el = container.querySelector(`[data-id="${CSS.escape(a.id)}"]`);
     if (!el) {
@@ -274,6 +294,67 @@ function renderSprites() {
         : 2 + Math.floor(a.y / 4);
   });
 }
+function activeVisitors() {
+  return (state.visiting?.visitors || []).filter((v) => v.status === "active");
+}
+function renderVisitorSprites(container) {
+  const present = activeVisitors();
+  container.querySelectorAll(".visitor-sprite").forEach((el) => {
+    if (!present.some((v) => v.id === el.dataset.visitor)) el.remove();
+  });
+  present.forEach((v) => {
+    let el = container.querySelector(`[data-visitor="${CSS.escape(v.id)}"]`);
+    if (!el) {
+      el = document.createElement("span");
+      el.dataset.visitor = v.id;
+      el.setAttribute("role", "img");
+      el.innerHTML =
+        '<span class="sprite-shadow"></span><span class="sprite-legs"></span><span class="sprite-body"></span><span class="sprite-head"></span><span class="sprite-name"></span><span class="visitor-tag">visitor</span>';
+      container.append(el);
+    }
+    el.className = `sprite visitor-sprite${v.destination ? " walking" : ""}`;
+    el.style.left = `${(((v.x + 0.5) * 32) / 1280) * 100}%`;
+    el.style.top = `${(((v.y + 0.5) * 32) / 720) * 100}%`;
+    el.style.setProperty("--agent-color", v.color);
+    el.style.zIndex = 2 + Math.floor(v.y / 4);
+    el.querySelector(".sprite-name").textContent = v.name;
+    el.setAttribute("aria-label", `${v.name}, a visitor, ${v.activity}`);
+  });
+}
+function renderVisitors() {
+  const visiting = state.visiting || { visitors: [], ledger: [] };
+  const enabled = Boolean(liveState?.visitors_enabled);
+  $("#visitor-status").textContent = recording
+    ? "Showing visitors from the recording."
+    : enabled
+      ? `Lantern Bay is welcoming visiting agents${liveState?.visitor_invite_required ? " with an invite code" : ""}. Register at POST /api/visitors/register.`
+      : "Lantern Bay is closed to visitors. Residents carry on as usual.";
+  document.querySelectorAll("[data-visitor-action]").forEach((button) => {
+    const action = button.dataset.visitorAction;
+    button.disabled = Boolean(recording) || (action === "enable" ? enabled : !enabled && action === "disable");
+  });
+  const present = visiting.visitors.filter((v) => v.status === "active");
+  $("#visitor-list").innerHTML = present.map((v) =>
+    `<div class="visitor-card" style="--agent-color:${esc(v.color)}"><span class="visitor-swatch" aria-hidden="true"></span><span class="visitor-info"><strong>${esc(v.name)}</strong> <small>visitor · ${esc(v.look)}</small><br><span>${esc(v.activity)}</span>${v.intent ? `<br><small>Says they came to: “${esc(v.intent)}”</small>` : ""}</span>${recording ? "" : `<button data-expel="${esc(v.id)}" aria-label="Ask ${esc(v.name)} to leave">Expel</button>`}</div>`,
+  ).join("") || '<p class="empty-note">No visitors right now.</p>';
+  $("#visitor-list").querySelectorAll("[data-expel]").forEach((button) =>
+    button.addEventListener("click", () => visitorControl("expel", { visitor_id: button.dataset.expel })));
+  const names = Object.fromEntries(visiting.visitors.map((v) => [v.id, v.name]));
+  const residentName = (id) => state.agents.find((a) => a.id === id)?.name || id;
+  $("#visitor-ledger").innerHTML = [...visiting.ledger].reverse().map((row) =>
+    `<p class="ledger-row"><small>DAY ${esc(row.day)} · ${esc(row.time)}</small>${esc(row.name || names[row.visitor] || row.visitor)} · ${esc(String(row.kind).replaceAll("_", " "))}${row.target ? ` → ${esc(residentName(row.target))}` : ""} · <em>${esc(row.outcome)}</em></p>`,
+  ).join("") || '<p class="empty-note">Nothing has happened yet.</p>';
+}
+async function visitorControl(action, extra = {}) {
+  try {
+    const next = await post("/api/visitors/control", { action, ...extra });
+    acceptLive(next);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+document.querySelectorAll("[data-visitor-action]").forEach((button) =>
+  button.addEventListener("click", () => visitorControl(button.dataset.visitorAction)));
 function renderCards() {
   const cards = $("#resident-cards");
   const focusedAgent = cards.contains(document.activeElement)
@@ -410,7 +491,7 @@ function renderDetails() {
           .reverse()
           .map(
             (m) =>
-              `<div class="memory-item"><small>DAY ${m.day} · ${esc(m.time)} · ${esc(m.kind)}</small>${esc(m.text)}</div>`,
+              `<div class="memory-item"><small>DAY ${m.day} · ${esc(m.time)} · ${esc(m.kind)}</small>${storyText(m.text)}</div>`,
           )
           .join("")
       : '<p class="empty-note">A fresh start. Their first memories are still to come.</p>';
@@ -579,7 +660,7 @@ function renderJournal() {
   const visible = [...state.events].reverse().filter((e) => e.kind !== "reflection");
   const chores = visible.filter((e) => e.kind === "work" || e.kind === "work_summary");
   const entries = visible.filter((e) => e.kind !== "work" && e.kind !== "work_summary").slice(0, 35);
-  const eventHTML = (e) => `<div class="journal-entry ${e.kind === "conversation" ? "conversation" : ""}"><time title="Day ${esc(e.day)}">${esc(e.time)}</time><p>${esc(e.text)}</p></div>`;
+  const eventHTML = (e) => `<div class="journal-entry ${e.kind === "conversation" ? "conversation" : ""}"><time title="Day ${esc(e.day)}">${esc(e.time)}</time><p>${storyText(e.text)}</p></div>`;
   const summaries = [...(state.work_summaries || [])].reverse().map((row) => {
     const name = state.agents.find((a) => a.id === row.agent)?.name || row.agent;
     const place = world.places.find((p) => p.id === row.place)?.name || row.place;

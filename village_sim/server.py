@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
+import os
 import mimetypes
 from pathlib import Path
 import secrets
@@ -14,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse, urlsplit
 
-from . import providers
+from . import providers, visitors
 from .cognition.planning import CONTRACT
 from .cognition.embeddings import EmbeddingCache
 from .cognition import conversations, reflection
@@ -23,6 +25,20 @@ from .persistence import export_session, read_session, restore_session, write_se
 from .recording import RecordingArchive
 
 STATIC = Path(__file__).parent / "static"
+OPERATOR_HEADER = "X-Operator-Token"
+OPERATOR_ENV = "VILLAGE_SIM_OPERATOR_TOKEN"
+INVITE_ENV = "VILLAGE_SIM_VISITOR_INVITE"
+# Endpoints that change the whole village. When an operator token is required
+# they need it in addition to the same-origin local check.
+OPERATOR_PATHS = ("/api/control", "/api/events", "/api/session/resume", "/api/visitors/control")
+
+
+class OperatorRequired(PermissionError):
+    """The operator token is missing or wrong."""
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _split_host(value: str) -> tuple[str, str]:
@@ -81,8 +97,22 @@ class Brain:
 
 
 class Session:
-    def __init__(self, count=3, seed=7, interval=2.0, state_path=None, cognition_mode="rules"):
+    def __init__(self, count=3, seed=7, interval=2.0, state_path=None, cognition_mode="rules", *,
+                 visitors_enabled=False, operator_token=None, invite_code=None, public_bind=False):
         self.condition = Condition()
+        if operator_token is not None and (not isinstance(operator_token, str) or len(operator_token) < 16
+                                           or any(c.isspace() for c in operator_token)):
+            raise ValueError("The operator token must be at least 16 characters without spaces")
+        if invite_code is not None and (not isinstance(invite_code, str) or not invite_code.strip()):
+            raise ValueError("The visitor invite code must not be empty")
+        # Secrets live only in server memory: never in state, checkpoints or replays.
+        self.operator_token = operator_token or secrets.token_urlsafe(24)
+        self.operator_token_explicit = operator_token is not None
+        self.operator_announced = False
+        self.invite_code = invite_code
+        self.public_bind = public_bind
+        self.visitors_enabled = bool(visitors_enabled)
+        self.visitor_tokens: dict[str, str] = {}
         self.state_path = Path(state_path) if state_path else None
         saved = read_session(self.state_path) if self.state_path and self.state_path.exists() else None
         self.sim = restore_session(saved) if saved is not None else Simulation(count, seed, cognition_mode=cognition_mode)
@@ -93,6 +123,8 @@ class Session:
         self.paused = settings.get("paused", False)
         if type(self.paused) is not bool:
             raise ValueError("Invalid saved playback status")
+        # Visitor tokens do not survive a restart, so visitors who were present leave.
+        visitors.depart_all(self.sim, "revoked", "left when the village restarted")
         self.persistence_error = None
         self.running = True
         self.revision = 0
@@ -113,9 +145,77 @@ class Session:
             "interval": self.interval,
             "revision": self.revision,
             "brains": {aid: brain.public() for aid, brain in self.brains.items()},
+            "visitors_enabled": self.visitors_enabled,
+            "visitor_invite_required": self.invite_code is not None,
+            "operator_required": self.operator_required,
             "persistence_error": ("The replay archive could not be written completely. Check disk space before starting a new story."
                                   if self.archive.failed else self.persistence_error),
         }
+
+    @property
+    def operator_required(self):
+        """Local single-user runs keep working without a token. Opening the
+        village to visitors, binding beyond loopback, or setting a token turns
+        operator authentication on."""
+        return self.visitors_enabled or self.public_bind or self.operator_token_explicit
+
+    def announce_operator(self):
+        """Print a generated operator token once, to the local console only."""
+        if self.operator_announced or self.operator_token_explicit or not self.operator_required:
+            return
+        self.operator_announced = True
+        print("Operator token (keep private; send it as the " + OPERATOR_HEADER
+              + " header or enter it in the viewer): " + self.operator_token, flush=True)
+
+    def operator_ok(self, supplied):
+        if not self.operator_required:
+            return True
+        return isinstance(supplied, str) and hmac.compare_digest(
+            supplied.encode(), self.operator_token.encode())
+
+    def visitor_ok(self, vid, header):
+        digest = self.visitor_tokens.get(vid)
+        visitor = self.sim.visiting["visitors"].get(vid)
+        if not (digest and visitor and visitor["status"] == "active" and header.startswith("Bearer ")):
+            return False
+        return hmac.compare_digest(_digest(header[7:]), digest)
+
+    def register_visitor(self, data):
+        if not self.visitors_enabled:
+            raise visitors.Unavailable("Lantern Bay is not accepting visitors right now")
+        invite_ok = self.invite_code is None or (
+            isinstance(data.get("invite"), str)
+            and hmac.compare_digest(data["invite"].encode(), self.invite_code.encode()))
+        visitor = visitors.register(self.sim, data, invite_ok=invite_ok)
+        token = secrets.token_urlsafe(32)
+        self.visitor_tokens[visitor["id"]] = _digest(token)
+        self.publish(record=False)
+        vid = visitor["id"]
+        return {"visitor_id": vid, "token": token, "lease_steps": visitors.LEASE_STEPS,
+                "observation_url": f"/api/visitors/{vid}/observation",
+                "act_url": f"/api/visitors/{vid}/act", "leave_url": f"/api/visitors/{vid}/leave"}
+
+    def visitor_control(self, data):
+        action = data.get("action")
+        if action == "enable":
+            self.visitors_enabled = True
+            self.announce_operator()
+        elif action == "disable":
+            self.visitors_enabled = False
+            visitors.depart_all(self.sim, "revoked", "left when the village closed to visitors")
+            self.visitor_tokens.clear()
+        elif action == "revoke_all":
+            visitors.depart_all(self.sim, "revoked", "had their pass revoked by the village keeper")
+            self.visitor_tokens.clear()
+        elif action == "expel":
+            vid = data.get("visitor_id")
+            if not visitors.depart(self.sim, vid, "expelled", "was asked to leave by the village keeper"):
+                raise ValueError("No active visitor has that id")
+            self.visitor_tokens.pop(vid, None)
+        else:
+            raise ValueError("Choose enable, disable, expel or revoke_all")
+        self.publish(record=False)
+        return self.state()
 
     def checkpoint(self, *, recording=False):
         return {
@@ -135,6 +235,7 @@ class Session:
 
     def resume(self, data):
         candidate = restore_session(data)
+        visitors.depart_all(candidate, "revoked", "left when the story was resumed")
         try:
             previous = self.archive.start(candidate.snapshot())
         except (OSError, sqlite3.Error):
@@ -155,6 +256,7 @@ class Session:
         self.paused = True
         self.brains.clear()
         self.tokens.clear()
+        self.visitor_tokens.clear()
         self.recording = [candidate.snapshot()]
         self.publish(record=False)
 
@@ -507,7 +609,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.session.state(), 200
         if path == "/api/world":
             return self.session.sim.world.config, 200
+        if path == "/api/visitors":
+            return {"enabled": self.session.visitors_enabled,
+                    "invite_required": self.session.invite_code is not None,
+                    **visitors.snapshot(self.session.sim)}, 200
         parts = path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "visitors"] and parts[3] == "observation":
+            vid = parts[2]
+            if vid not in self.session.sim.visiting["visitors"]:
+                return {"error": "Unknown visitor"}, 404
+            if not self.session.visitors_enabled:
+                return {"error": "Lantern Bay is not accepting visitors right now"}, 403
+            if not self.session.visitor_ok(vid, self.headers.get("Authorization", "")):
+                return {"error": "A valid visitor bearer token is required"}, 401
+            visitors.renew(self.session.sim, vid)
+            return visitors.observe(self.session.sim, vid), 200
         if (
             len(parts) == 4
             and parts[:2] == ["api", "agents"]
@@ -614,7 +730,70 @@ class Handler(BaseHTTPRequestHandler):
         # A local port forward keeps the browser on loopback but changes the port.
         return _loopback(host_name) and _loopback(peer)
 
+    def read_json(self, limit=8192):
+        if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+            raise TypeError("Content-Type must be application/json")
+        size = int(self.headers.get("Content-Length", "0"))
+        if size < 1 or size > limit:
+            raise ValueError(f"Request must contain 1–{limit} bytes of JSON")
+        data = json.loads(self.rfile.read(size))
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object")
+        return data
+
+    def visitor_post(self, path):
+        """Visitor endpoints accept remote programs; each call is token-checked.
+        Browsers cannot reach them cross-site: JSON bodies need a CORS preflight,
+        which this server never grants."""
+        try:
+            try:
+                data = self.read_json()
+            except TypeError as exc:
+                return self.send({"error": str(exc)}, 415)
+            parts = path.strip("/").split("/")
+            with self.session.condition:
+                session = self.session
+                if parts == ["api", "visitors", "register"]:
+                    result = session.register_visitor(data)
+                elif len(parts) == 4 and parts[3] in ("act", "leave"):
+                    vid = parts[2]
+                    if vid not in session.sim.visiting["visitors"]:
+                        return self.send({"error": "Unknown visitor"}, 404)
+                    if not session.visitors_enabled:
+                        raise visitors.Unavailable("Lantern Bay is not accepting visitors right now")
+                    if not session.visitor_ok(vid, self.headers.get("Authorization", "")):
+                        raise PermissionError("A valid visitor bearer token is required")
+                    if parts[3] == "leave":
+                        visitors.depart(session.sim, vid, "left", "said goodbye and left the village")
+                        session.visitor_tokens.pop(vid, None)
+                        result = {"left": True}
+                    else:
+                        result = visitors.act(session.sim, vid, data)
+                        result["for_step"] = session.sim.step
+                    session.publish(record=False)
+                else:
+                    return self.send({"error": "Unknown endpoint"}, 404)
+            self.send(result)
+        except visitors.RateLimited as exc:
+            self.send({"error": str(exc)}, 429)
+        except visitors.Unavailable as exc:
+            self.send({"error": str(exc)}, 403)
+        except PermissionError as exc:
+            self.send({"error": str(exc)}, 401)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.send({"error": str(exc)}, 400)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def needs_operator(self, path):
+        parts = path.strip("/").split("/")
+        return path in OPERATOR_PATHS or (
+            len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] in ("brain", "join"))
+
     def do_POST(self):
+        path = urlparse(self.path).path
+        if path.startswith("/api/visitors/") and path != "/api/visitors/control":
+            return self.visitor_post(path)
         if not self.local_control_allowed():
             return self.send(
                 {
@@ -628,6 +807,9 @@ class Handler(BaseHTTPRequestHandler):
             )
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
             return self.send({"error": "Content-Type must be application/json"}, 415)
+        if self.needs_operator(path) and not self.session.operator_ok(self.headers.get(OPERATOR_HEADER)):
+            return self.send({"error": f"This village requires the operator token in the {OPERATOR_HEADER} header",
+                              "operator_token_required": True}, 401)
         try:
             size = int(self.headers.get("Content-Length", "0"))
             limit = 50 * 1024 * 1024 if urlparse(self.path).path == "/api/session/resume" else 8192
@@ -690,6 +872,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Unknown control action")
             session.publish(record=action in ("step", "population"))
             return session.state()
+        if path == "/api/visitors/control":
+            return session.visitor_control(data)
         if path == "/api/events":
             sim.inject(data.get("kind"))
             session.publish()
@@ -756,11 +940,21 @@ class Handler(BaseHTTPRequestHandler):
         raise ValueError("Unknown endpoint")
 
 
-def serve(host="127.0.0.1", port=8000, count=3, seed=7, interval=2.0, state_path=None, cognition_mode="rules"):
-    session = Session(count, seed, interval, state_path, cognition_mode=cognition_mode)
+def serve(host="127.0.0.1", port=8000, count=3, seed=7, interval=2.0, state_path=None, cognition_mode="rules",
+          visitors_enabled=False):
+    token = os.environ.get(OPERATOR_ENV) or None
+    invite = os.environ.get(INVITE_ENV) or None
+    session = Session(count, seed, interval, state_path, cognition_mode=cognition_mode,
+                      visitors_enabled=visitors_enabled, operator_token=token, invite_code=invite,
+                      public_bind=not _loopback(_split_host(host)[0] or host))
     server = Server((host, port), session)
     session.thread.start()
     print(f"Lantern Bay is alive at http://{host}:{server.server_port}", flush=True)
+    if session.visitors_enabled:
+        print("Visiting agents are welcome: POST /api/visitors/register", flush=True)
+    if session.operator_token_explicit:
+        print(f"Operator token loaded from {OPERATOR_ENV}.", flush=True)
+    session.announce_operator()
     print(
         "Press Ctrl+C to stop. The village resumes from disk on the next launch."
         if state_path else "Press Ctrl+C to stop. Save this story in the viewer to resume it later.",

@@ -13,6 +13,7 @@ from typing import Callable
 
 from .cognition.memory import MemoryStore, memory_view
 from .cognition import planning, conversations, reflection
+from . import visitors
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -145,6 +146,8 @@ class Simulation:
         self.suppers: list[dict] = []
         self.reflections: list[dict] = []
         self.visitor: dict | None = None
+        # Visiting agents (outside programs). Empty unless an operator enables them.
+        self.visiting: dict = visitors.initial_state()
         self.daily_work: dict[str, dict] = {}
         self.last_miss: dict[str, str] = {}
         self.set_population(count)
@@ -653,6 +656,7 @@ class Simulation:
         self._converse()
         reflection.consider(self, day_end=day_ended)
         reflection.adopt_help_plans(self)
+        visitors.tick(self, day_ended=day_ended)
         return self.snapshot()
 
     def _result_options(self, agent, place):
@@ -859,6 +863,7 @@ class Simulation:
             "suppers": copy.deepcopy(self.suppers[-7:]),
             "reflections": copy.deepcopy(self.reflections[-7:]),
             "visitor": copy.deepcopy(self.visitor),
+            "visiting": visitors.snapshot(self),
             "work_summaries": copy.deepcopy(list(self.daily_work.values())[-32:]),
             "conversations": copy.deepcopy(self.conversations[-16:]),
             "commitments": copy.deepcopy(self.commitments[-32:]),

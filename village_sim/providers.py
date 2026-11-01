@@ -12,6 +12,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from .cognition.memory import memory_view
 from .cognition.planning import CONTRACT, validate_proposal
 from .cognition import conversations, reflection
+from .visitors import PROMPT_NOTE, SPEECH_OPEN
 
 
 class ProviderError(Exception):
@@ -158,6 +159,14 @@ def _offered(value: str, options: list) -> str | None:
     return None
 
 
+def _messages(instructions: str, context: dict) -> list[dict]:
+    """System and user messages. Visitor speech stays quoted, untrusted data."""
+    content = json.dumps(context, ensure_ascii=False)
+    if SPEECH_OPEN in content:
+        instructions = instructions + " " + PROMPT_NOTE
+    return [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
+
+
 def _plain(value: str) -> str:
     return (
         value.strip()
@@ -213,10 +222,7 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         )
     body = {
         "model": config.model,
-        "messages": [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
-        ],
+        "messages": _messages(instructions, context),
         "response_format": {"type": "json_object"},
     }
     try:
@@ -266,10 +272,7 @@ def reflect(config: ProviderConfig, context: dict) -> dict:
         "Do not invent events, people, supplies, trust numbers, or a new biography. Do not use markdown."
     )
     try:
-        payload = _complete(config, {"model": config.model, "messages": [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
-        ]})
+        payload = _complete(config, {"model": config.model, "messages": _messages(instructions, context)})
         return reflection.validate_insights(_parse_decision(_message_text(payload["choices"][0])), context)
     except HTTPError as error:
         error.close()
@@ -292,10 +295,7 @@ def converse(config: ProviderConfig, context: dict) -> dict:
         "Speech alone never creates a commitment. Do not invent past events or agree for your partner."
     )
     try:
-        payload = _complete(config, {"model": config.model, "messages": [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
-        ]})
+        payload = _complete(config, {"model": config.model, "messages": _messages(instructions, context)})
         return conversations.validate_turn(_parse_decision(_message_text(payload["choices"][0])), context)
     except HTTPError as error:
         error.close()

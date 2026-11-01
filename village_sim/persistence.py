@@ -14,8 +14,9 @@ from .decisions import Action
 from .cognition.memory import make_memory, validate_memory
 from .cognition import planning, conversations
 from .simulation import Agent, PERSONAS, Simulation
+from . import visitors
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
@@ -76,6 +77,8 @@ def _migrate(data):
         raise ValueError("Unsupported session version")
     if data["schema_version"] == SCHEMA_VERSION:
         return data
+    if data["schema_version"] == 6:
+        return _migrate_visitors(copy.deepcopy(data))
     if data["schema_version"] == 5:
         return _migrate_overlap(copy.deepcopy(data))
     if data["schema_version"] == 4:
@@ -144,6 +147,12 @@ def _migrate_overlap(data):
         commitment["together"] = (
             isinstance(people, list) and isinstance(attended, list) and attended == people
         )
+    return _migrate_visitors(data)
+
+
+def _migrate_visitors(data):
+    """Version 7 adds visiting agents; older villages simply have none yet."""
+    data.setdefault("state", {}).setdefault("visiting", visitors.initial_state())
     data["schema_version"] = SCHEMA_VERSION
     return data
 
@@ -383,6 +392,7 @@ def _restore(data):
     candidate.agents = {aid: restored[aid] for aid in active}
     candidate.rng = rng
     conversations.validate_state(candidate)
+    visitors.validate_state(candidate)
     if any(row["agent"] not in restored for row in state.get("daily_work", {}).values()):
         raise ValueError("Missing work history resident")
     candidate.pending = {}
