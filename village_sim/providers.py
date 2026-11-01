@@ -9,6 +9,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from .cognition.memory import memory_view
+from .cognition.planning import CONTRACT, validate_proposal
+
 
 class ProviderError(Exception):
     """A safe, user-facing provider failure with no response-body or key details."""
@@ -20,6 +23,7 @@ class ProviderConfig:
     model: str
     api_key: str = field(repr=False)
     every_steps: int = 8
+    embedding_model: str | None = None
 
     @classmethod
     def parse(cls, data: dict, previous: ProviderConfig | None = None):
@@ -27,6 +31,10 @@ class ProviderConfig:
         model = data.get("model", "")
         key = data.get("api_key", "")
         every = data.get("every_steps", 8)
+        embedding_model = data.get("embedding_model", previous.embedding_model if previous else None)
+        if embedding_model is not None and (not isinstance(embedding_model, str) or len(embedding_model) > 150):
+            raise ValueError("Embedding model must be at most 150 characters")
+        embedding_model = (embedding_model.strip() or None) if isinstance(embedding_model, str) else None
         if not isinstance(base, str) or len(base) > 500:
             raise ValueError("Enter an API base URL")
         base = base.strip().rstrip("/")
@@ -62,7 +70,7 @@ class ProviderConfig:
         key = key.strip()
         if not key and previous and previous.base_url == base:
             key = previous.api_key
-        return cls(base, model.strip(), key, every)
+        return cls(base, model.strip(), key, every, embedding_model)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -170,12 +178,10 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
     context["agent"] = {
         k: v for k, v in agent.items() if k not in ("memory", "provider_until")
     }
-    context["recent_memories"] = agent["memory"][-12:]
+    context["recent_memories"] = observation.get("recent_memories", agent["memory"][-12:])
     # Vectors are storage/retrieval data, not useful language-model context.
     for key in ("recent_memories", "relevant_memories"):
-        context[key] = [{k: v for k, v in record.items()
-                         if k not in ("embedding", "embedding_model")}
-                        for record in context.get(key, [])]
+        context[key] = memory_view(context.get(key, []), characters=3000 if key == "recent_memories" else 6000)
     instructions = (
         "You inhabit a villager in a small fishing village. Act according to your persona, "
         "memories, relationships, daily goals, daily plan, time and nearby people. "
@@ -188,6 +194,20 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         "thought grounded in the supplied facts, at most 200 characters). Choose null when a "
         "slot has no suitable option. Return only a JSON object with these slots. Do not use markdown."
     )
+    if observation.get("decision_contract") == CONTRACT:
+        instructions = (
+            "You are an independent villager. Choose a short plan grounded in your own memories, "
+            "persona and priorities. You may choose any entry in allowed_actions. "
+            "Return only JSON: {\"contract\":\"plan-v1\",\"goal\":\"...\",\"steps\":["
+            "{\"action\":\"visit\",\"target\":\"tom\",\"location\":\"shore\","
+            "\"duration_minutes\":45,\"reason\":\"...\"}],\"memory_ids\":[42]}. "
+            "Copy action/location/target from a legal entry; use null for an absent target. "
+            "Use 1–8 steps, 15–180 minutes each in multiples of 15, at most one day total. "
+            "Goal and reasons are at most 200 characters. Cite only supplied memory IDs. "
+            "Do not invent people, places, resources, commitments or past events. The world "
+            "determines movement and work outcomes. Visits are attempts to meet someone, "
+            "not agreements on their behalf. Do not use markdown."
+        )
     body = {
         "model": config.model,
         "messages": [
@@ -211,7 +231,8 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         choice = payload["choices"][0]
         if not isinstance(choice, dict):
             raise ValueError
-        return validate_slots(_parse_decision(_message_text(choice)), observation)
+        proposal = _parse_decision(_message_text(choice))
+        return validate_proposal(proposal, observation) if observation.get("decision_contract") == CONTRACT else validate_slots(proposal, observation)
     except ProviderError:
         raise
     except HTTPError as error:
@@ -230,18 +251,18 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         ) from None
 
 
-def _complete(config: ProviderConfig, body: dict) -> dict:
+def _complete(config: ProviderConfig, body: dict, endpoint="/chat/completions", max_bytes=256 * 1024) -> dict:
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if config.api_key:
         headers["Authorization"] = "Bearer " + config.api_key
     request = Request(
-        config.base_url + "/chat/completions",
+        config.base_url + endpoint,
         data=json.dumps(body).encode(),
         headers=headers,
     )
     with build_opener(NoRedirect()).open(request, timeout=30) as response:
-        raw = response.read(256 * 1024 + 1)
-    if len(raw) > 256 * 1024:
+        raw = response.read(max_bytes + 1)
+    if len(raw) > max_bytes:
         raise ProviderError(
             "Provider response was too large. Rules are keeping the villager moving."
         )

@@ -1,52 +1,31 @@
 # Cognitive engine and hybrid mode
 
 Delivery contract for [issue #4](https://github.com/jimskin03/village-sim/issues/4).
-The first increment implements persistent memory and retrieval. The remaining
-stages below specify future behavior. World execution, navigation, the viewer
-and provider configuration retain their existing interfaces.
-
-## Delivery stages
+Phases 1 and 2 are implemented. Conversation, personal reflection, local
+knowledge and coordination below remain future stages.
 
 | Stage | Deliverable | Status |
 | --- | --- | --- |
-| 1 | Append-only episodic/semantic memory, retrieval, checkpoint migration | Implemented |
-| 2 | Validated autonomous plans, event-driven replanning, cognition mode flag | Specified |
-| 3 | Bounded multi-turn conversation with negotiated commitments | Specified |
-| 4 | Individual reflection, evidence and evolving trust | Specified |
+| 1 | Persistent episodic/semantic memory and retrieval | Implemented |
+| 2 | Autonomous plans, replanning and cognition mode flag | Implemented |
+| 3 | Multi-turn conversations and negotiated commitments | Specified |
+| 4 | Individual reflection and evolving trust | Specified |
 | 5 | Local perception and information provenance | Specified |
-| 6 | Agent-organized gatherings and coordinated schedules | Specified |
+| 6 | Agent-organized gatherings and coordination | Specified |
 
-Each stage must preserve rule fallback, checkpoint resume and immutable replay.
-Providers gain action-selection authority only when stage 2's feature flag and
-validation are implemented together.
+## Memory and retrieval
 
-## Implemented memory contract
+`cognition/memory.py` constructs and validates append-only records. Each has a
+stable world event `id`, identical `content`/`text`, absolute-minute `timestamp`,
+occurrence `step`/`day`/`time`, `type` (`episodic` or `semantic`), event `kind`,
+`importance` in [0, 1], participant `agents`, supporting earlier `source_ids`, and
+optional `embedding`/`embedding_model`. Repeated wording receives new IDs.
+Reflection adds summaries without deleting episodes. Both participants retain
+conversation promises independently of their latest relationship fact.
 
-`village_sim/cognition/memory.py` owns record construction, validation and ranking.
-`Agent.memory` remains a JSON list; existing event fields continue to render in
-the viewer. No database, model, vector library or network access is required.
-
-| Field | Meaning |
-| --- | --- |
-| `id` | Stable integer from the world's monotonically increasing event sequence |
-| `content`, `text` | Identical content; `text` preserves viewer compatibility |
-| `timestamp` | Absolute simulated minutes, including the starting time |
-| `step`, `day`, `time` | Existing occurrence coordinates |
-| `type` | `episodic` for experiences, `semantic` for reflections/work summaries |
-| `kind` | Existing category, including `promise`, `work`, `reflection` |
-| `importance` | Finite score in [0, 1]; promises 0.95, reflections 0.85, chores 0.3 |
-| `agents` | Relevant participant IDs; only recipients receive the episode |
-| `source_ids` | Earlier supporting event IDs for derived summaries |
-| `embedding`, `embedding_model` | Optional finite numeric vector and embedding-space identifier |
-
-Every occurrence receives a new ID even when wording or timestamps repeat.
-Reflection adds summaries alongside original episodes, including work by absent
-residents. Conversation promises become memories for both participants,
-independently of the latest relationship fact.
-
-`MemoryStore(records).retrieve(query, now=..., limit=12, query_embedding=None,
-embedding_model=None)` returns detached records without changing memory,
-timestamps or random state. Retrieval never calls a provider.
+`MemoryStore.retrieve(query, now=..., limit=12, query_embedding=None,
+embedding_model=None)` returns detached records without changing saved memories
+or random state. Ranking remains:
 
 ```
 score = 0.60 * relevance + 0.25 * importance + 0.15 * recency
@@ -54,86 +33,86 @@ recency = 0.5 ** (age_in_simulated_minutes / 1440)
 lexical = shared_tokens / sqrt(query_token_count * memory_token_count)
 ```
 
-Lexical matching folds case, removes common stop words and normalizes trailing
-plural `s`. For compatible, equal-sized, nonzero vectors, relevance combines
-75% nonnegative cosine similarity and 25% lexical overlap. Otherwise relevance
-uses lexical overlap. Missing, mismatched, zero or invalid query vectors use the
-lexical fallback. Storage rejects nonfinite vectors; embedding model IDs prevent
-cross-space comparisons. Equal scores prefer newer timestamps, then higher IDs.
-Empty queries rank by importance and recency.
+Lexical matching folds case, removes stop words and normalizes trailing plural
+`s`. Compatible, equal-sized, nonzero vectors blend 75% nonnegative cosine
+similarity with 25% lexical overlap. Otherwise relevance uses lexical overlap.
+Equal scores prefer newer timestamps, then higher IDs. Empty queries rank by
+importance and recency.
 
-`Simulation.observe(aid, memory_query=None)` builds a default query from current
-activity, destination, unfinished goals, nearby people and relationship facts.
-The authenticated observation endpoint accepts optional `?memory_query=...`, up
-to 500 decoded characters, searching only that resident's memory. The query and
-up to twelve `relevant_memories` appear in observations. Full memory remains
-available to harnesses. The built-in model receives at most twelve relevant and
-twelve recent memories, excluding vectors from both views. Callers with an
-embedding service can supply vectors directly to `MemoryStore`; no embedding
-service or automatic embedding calls are included in this increment.
+The simulation retains one incremental index per resident: token postings,
+importance/recency buckets and event-ID lookup. Retrieval ranks matching records
+plus the newest k records from each importance bucket using a top-k heap. This
+preserves exact lexical ranking while avoiding a full-history sort. Dense lexical
+matches can still require linear scoring. Vector retrieval scans compatible
+stored embeddings; this is not an approximate vector index. Derived indexes are
+rebuilt lazily after restore and are never checkpointed.
 
-### Persistence and limits
+`Simulation.observe(aid, memory_query=None)` uses activity, destination, unfinished
+goals, nearby people and relationships as its default query. Harnesses can pass
+`?memory_query=...` (up to 500 decoded characters) to search their resident's
+complete archive. Retrieval itself makes no network calls.
 
-Checkpoint schema 2 stores enriched memories for active and absent residents.
-Schema 1 migrates before validation: preserve IDs/content, derive timestamps
-from world start and step length, assign deterministic importance/type, and
-remove the obsolete permanent text index. Migration does not modify its input.
-Legacy records have empty evidence links and no embeddings. Experiences already
-deleted by an older version cannot be recovered.
+### Optional automatic embeddings
 
-Validation rejects invalid importance, timestamps, vectors, duplicate resident
-memory IDs, unknown recipients and forward evidence references before replacing
-the live village. Provider connections and secrets remain outside checkpoints;
-restore retains the random sequence. Snapshot and recording schemas remain 1,
-with additive fields. Older replay-only stories remain viewable.
+A provider connection may set `embedding_model` (also available in Connection
+details). A background worker batches the query and up to 24 relevant/recent
+memory texts through that provider's `/embeddings` endpoint before planning.
+The per-connection LRU caches 512 texts, separates endpoint/model spaces, validates
+returned vectors and persists vectors on matching full memory records. At most
+25 texts of at most 6,000 characters are sent in one embedding batch. The first
+call may seed only part of an old archive; older episodes gain vectors as they
+surface in retrieval. Existing stored vectors can participate in later queries.
 
-Memory retention is unbounded. Retrieval ranks the complete list in memory;
-snapshots and recording frames still include full histories, so long recordings
-grow faster than elapsed steps. Future indexing/archival must retain IDs and
-evidence. The viewer's existing recording import size limit still applies.
+An embedding failure reports a separate public `embedding_error` and continues
+planning with lexical recall. Missing embedding configuration makes no embedding
+calls. Credentials stay runtime-only, and model prompts omit vectors. Embedding
+spaces are identified by a hash of endpoint and model, without the key.
 
-## Proposed hybrid execution contract
+### Storage and transmission budgets
 
-Stage 2 adds persisted `cognition_mode`, initially opt-in. Existing checkpoints
-migrate to `rules`. Fresh villages may default to `hybrid` once stage 2's
-acceptance gates pass.
+Checkpoints retain complete memories, journals, ledgers and plans for active and
+absent residents. Snapshot schema remains 1, with additive cognitive fields.
+Live snapshots expose up to 64 recent memories and the total `memory_count`,
+80 journal events, seven suppers/reflections and 32 work summaries. Memory text
+is capped at 1,200 characters per record and 24,000 characters per resident view;
+source lists expose at most 16 IDs. Snapshot vectors are omitted as null values.
+These are display views, not archive deletion.
 
-| Mode | Decisions | Social cognition | Missing provider |
-| --- | --- | --- | --- |
-| `rules` | Existing deterministic schedules/goals | Existing behavior | No calls |
-| `hybrid` | Model plans on meaningful triggers; routine steps use rules | Deterministic until stages 3/4 enabled | Rules continue |
-| `generative` | Model plans at goal boundaries and meaningful triggers | Model conversation/reflection | Rules continue |
+Model context has up to twelve relevant memories (6,000 text characters total)
+and twelve recent memories (3,000 total). Observation memory views are bounded
+as well. Live replay retains the latest 256 frames. Saved story checkpoints
+still contain the entire resumable archive; headless exports retain exactly
+`steps + 1` bounded frames for the explicitly requested run.
 
-All modes share legality checks, A* movement, cooldowns, supplies and storm
-priority. External harness and UI provider remain mutually exclusive per agent.
+Archive storage and atomic checkpoint serialization still grow with experience.
+The population remains capped at eight. Tests exercise more than 100 simulated
+days/10,000 episodes, index candidate counts, archive retention, and frame/text
+budgets. Larger populations need archival storage and vector indexing first.
 
-### Interfaces
+## Hybrid planning
 
-`engine.py` coordinates the provider-independent pipeline. `planning.py` owns
-plans and validation; `conversations.py`, `reflection.py`, `perception.py` and
-`relationships.py` own durable social cognition. Proposed contracts:
+`rules` is the default for new villages and migrated saves. Opt into `hybrid`
+through Settings → Thinking style, `--cognition hybrid` for a new village, or
+`POST /api/control` with `{"action":"cognition","mode":"hybrid"}`. The setting
+is persisted and reset retains it. Saved sessions retain their own mode on launch.
 
-```python
-perceive(agent_id, world_view) -> Percepts
-retrieve(query, now, limit=12) -> list[Memory]
-needs_replan(agent_state, percepts, changes) -> ReplanReason | None
-make_request(agent_state, percepts, memories, legal_actions) -> CognitiveRequest
-complete(request) -> CognitiveProposal  # provider/harness, outside world lock
-validate(proposal, current_world) -> AcceptedPlan | Rejection
-execute(accepted_step, current_world) -> Outcome
-```
+Rules mode preserves the legacy `voice-v1` contract: the model fills offered
+result/mood/speech/promise slots while schedules choose activity/destination.
+Hybrid mode uses explicit `plan-v1` proposals. It offers craft work, rest, visits
+and the current routine. Shelter, sleep and festivals constrain the legal set.
+Rules continue while a plan is unavailable, a call fails or a proposal rejects.
+Accepted plans continue deterministically through temporary provider absence.
+`generative` mode is reserved for later stages and is not accepted yet.
 
-`Simulation` executes outcomes; `decisions.py` remains the fallback.
-`providers.py` translates cognitive requests to the configured provider's existing
-completion API. It must not mutate the world or hard-code a model ID.
+### Proposal contract
 
-### Legal actions and plans
-
-Expose several legal actions rather than one rule-selected slot. A proposal has
-a goal, bounded ordered steps and supporting memory IDs:
+Observations expose `decision_contract`, `cognitive_revision`, `replan_reason`,
+`allowed_actions` and the rule `suggested_action`. A plan names an ordered list
+of legal steps and supporting memory IDs:
 
 ```json
 {
+  "contract": "plan-v1",
   "goal": "Help Tom repair his boat",
   "steps": [{
     "action": "visit", "target": "tom", "location": "shore",
@@ -144,38 +123,57 @@ a goal, bounded ordered steps and supporting memory IDs:
 }
 ```
 
-Initial limits: eight steps, 15–180 minutes per step in 15-minute increments,
-one simulated day total, goal/reason text up to 200 characters. Reject unknown
-or absent targets, unknown/unreachable places, unsupported actions, durations
-and inaccessible evidence IDs. Work must match craft/location. Visits confer
-no work result. Shared commitments require both parties' acceptance. The world
-alone determines production and repair success.
+External harness submissions additionally include the observed `step` and
+`revision` (copied from `cognitive_revision`). Legacy voice replies never gain
+movement authority, even in hybrid mode. Provider replies must explicitly use
+`plan-v1`; a wrong/missing contract fails safely.
 
-Revalidate at adoption and before execution. A moving target, closed jetty or
-changed schedule can invalidate a proposal. Shelter, sleep and accepted meetings
-constrain legality. Rejection preserves rule execution and reports a bounded
-reason. Free text never becomes executable commands.
+Plans have 1–8 steps, each lasting 15–180 minutes in multiples of 15, at most
+one simulated day total. Goal/reason text is at most 200 characters; at most 24
+memory IDs may cite the resident's own archive. A model can cite only memories
+in its request. Actions/locations/targets must match current legal entries.
+Work must match craft/location. Visit targets must be present; their destination
+must still match the proposal. Visits do not produce craft outputs or establish
+commitments on another resident's behalf.
 
-### Replanning and asynchronous calls
+Adoption checks reachability before changing state. Every execution step checks
+current legality and reachability again. Travel uses existing A*, speed and
+cooldowns. Duration counts time after arrival. Plans expire after one game day
+including travel. The world determines supplies and repair success. Free text
+never becomes an executable command.
 
-Persist plan ID, current step, creation/completion times, evidence IDs, status
-(`active`, `completed`, `invalidated`) and a monotonic cognitive revision.
-Trigger replanning on goal completion, important newly learned information,
-schedule/commitment changes, target departure, blocked actions or hazards.
-Routine movement and unimportant repeated chores do not cause model calls.
-Relevant promise and insight memories inform the goal-selection request.
+### Durable state and replanning
 
-Use background calls, at most one per resident in flight. Capture simulation
-identity, provider generation, plan revision and observed step. Reject results
-from replaced sessions/providers or superseded plans; revalidate all others
-against current state. Coalesce triggers received during a request. Preserve
-the existing ten-second automatic call spacing, thirty-second error backoff
-and thirty-second timeout. Manual Think may bypass spacing, never single-flight
-validation. Rules execute while requests are pending or failing.
+Each resident stores `cognitive_plan`, `cognitive_revision` and `replan_reason`.
+A plan includes ID/revision, created/updated step, status (`active`, `completed`,
+`invalidated`), step `index`, `remaining` duration in ticks, and interruption
+reason. Step completion advances the plan; final completion records an outcome.
+Meaningful events invalidate the plan and increment the cognitive revision.
+Triggers include promises, weather, festivals, supper, daily-goal completion,
+work setbacks, schedule changes, population changes and unavailable actions.
+Routine movement and unimportant chores do not request new plans.
 
-Version the plan proposal separately from legacy voice slots. Rules-mode models
-retain their existing contract; old `place`/`activity` replies must not silently
-gain new authority.
+The server retains at most one request in flight per resident. Responses must
+match the simulation identity, provider connection identity, cognition mode and
+cognitive revision. Revalidate legal actions against the current world before
+adoption. A newer accepted plan, reset, mode change or provider replacement
+prevents stale work from winning. Replan triggers coalesce while a request runs.
+Automatic calls remain at least ten seconds apart, with thirty-second error
+backoff and thirty-second per-request timeout. Optional embedding and planning
+calls run sequentially in the background. Think bypasses spacing, not validation.
+
+Checkpoint schema 3 adds cognition mode and per-resident plans. Schema 2 migrates
+to rules with empty cognitive plans; schema 1 first receives memory metadata.
+Migration preserves input, identity, memory IDs/content and random state.
+Validation rejects malformed plans, invalid progress/revisions, inaccessible
+sources, unsupported crafts/targets and invalid vectors before session replace.
+Provider keys, connections, derived indexes and embedding caches are excluded.
+
+`cognition/planning.py` owns legality, proposal validation and plan construction;
+`Simulation` executes and records outcomes; `decisions.py` remains the fallback;
+`providers.py` adapts the configured completion API. The server coordinates calls
+outside the world lock. Separate conversation/reflection/perception modules and
+an engine coordinator remain work for subsequent stages.
 
 ## Subsequent social cognition
 

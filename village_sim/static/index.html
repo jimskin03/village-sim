@@ -411,6 +411,13 @@
         The village saves itself after every step. Saved stories can be replayed
         or resumed as a living village.
       </p>
+      <label class="setting-row">Thinking style
+        <select id="cognition-mode">
+          <option value="rules">Rules · daily routines</option>
+          <option value="hybrid">Hybrid · models can make plans</option>
+        </select>
+      </label>
+      <p class="setting-note">Hybrid lets connected models choose work, rest and visits. Villagers use routines while waiting for a plan.</p>
       <p id="persistence-status" class="setting-note" role="status"></p>
       <div class="session-tools" aria-label="Recordings and information">
         <button id="export" class="secondary-button">
@@ -444,8 +451,8 @@
         </div>
       </form>
       <p>
-        Choose a brain for this villager. It can shape a work result, a mood,
-        or a promise within the village’s rules.
+        Choose a brain for this villager. Hybrid thinking lets it choose a plan;
+        Rules thinking lets it shape a work result, a mood or a promise.
       </p>
       <form id="llm-form" class="llm-form">
         <label
@@ -478,6 +485,8 @@
         >
         <details id="llm-advanced" class="llm-advanced">
           <summary>Connection details</summary>
+        <label>Embedding model (optional)<input id="llm-embedding-model" maxlength="150" autocomplete="off" placeholder="Leave blank for keyword recall" /></label>
+        <small>Uses your provider’s embeddings endpoint for semantic recall. Leave blank for zero-cost keyword recall.</small>
         <label
           >API base URL<input
             id="llm-endpoint"

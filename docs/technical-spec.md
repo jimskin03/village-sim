@@ -77,25 +77,29 @@ also be injected into `Simulation(decision=...)` for in-process experiments.
 Memories are append-only episodic/semantic records, including repeated work and
 promises. Retrieval scores query relevance, importance and recency, returning up
 to twelve detached records. Optional compatible embeddings supplement lexical
-matching; no embedding service is required or called by the simulation. Midnight
+matching; an optional provider embedding model runs in background workers. Midnight
 summaries link supporting event IDs and retain original episodes. All memories
-remain in snapshots and checkpoints. Conversations record symmetric relationship
+remain in checkpoints; snapshots contain bounded views. Conversations record symmetric relationship
 facts with an eight-step cooldown. Reflection records a daily village summary.
 The [cognition specification](cognition-spec.md) defines memory fields, ranking,
-checkpoint migration and the proposed subsequent hybrid cognition stages.
+checkpoint migration, implemented hybrid planning and subsequent social stages.
 
-External actions are a one-step override, not a new permanent routine. They name
-a destination, describe an activity, and may contain speech. Missing, late or
-invalid external input leaves rules in control. A storm overrides other plans
+Rules-mode external actions are a one-step voice override. Hybrid mode accepts
+explicit `plan-v1` proposals selecting several legal work/rest/visit actions.
+Plans are bounded, persisted, interrupted by important events, and checked for
+legality/reachability at adoption and execution. Missing, late or invalid input
+leaves rules in control. A storm overrides other plans
 for twelve steps; a festival draws villagers to the hearth for sixteen. Storms
 take priority over festivals. Quiet evening clears both events.
 
 ## Snapshot v1
 
 `Simulation.snapshot()` returns a new JSON-compatible object. Each agent includes
-its full persona, plan, memory and relationships. Recent global events are capped
+its full persona, plans, relationships, up to 64 recent memories and total
+`memory_count`. Recent global events are capped
 at 80 in each snapshot; the full event history and all memories remain in the
-session. Each event includes step, day and formatted time.
+session/checkpoint. Text and evidence budgets are defined in the cognition spec.
+Each event includes step, day and formatted time.
 
 ```json
 {
@@ -117,11 +121,13 @@ session. Each event includes step, day and formatted time.
 Agent fields: `id`, `name`, `role`, `home`, `color`, `persona`, `x`, `y`, `activity`,
 `destination`, `speech`, `memory`, `plan`, `relationships`, `goals`, `provider`,
 `provider_until`, `last_chat`, `last_work`, `work_count`.
+Additive fields include `cognitive_plan`, `cognitive_revision`, `replan_reason`
+and `memory_count`; snapshots also expose `cognition_mode` (`rules` or `hybrid`).
 
 `goals` is an additive v1 field: a list of objects with `id` (`work` or `social`),
 `day`, `title`, `target`, `progress`, `completed`, `place` and `partner` (a villager
-ID for social goals, otherwise null). Relationships remain symmetric conversation
-counts; three conversations mark a friendship in the viewer. Observations include
+ID for social goals, otherwise null). Relationships record symmetric shared
+facts. Observations include
 active `villagers` summaries (`id`, `name`, `activity`, `destination`) for planning.
 Old v1 recordings without goals remain viewable; goals are never recalculated
 during replay.
@@ -147,11 +153,12 @@ multi-user permission system. Agent decisions additionally require a bearer toke
 | POST | `/api/control` | `{ "action": "pause" / "play" / "step" / "reset" }` |
 | POST | `/api/control` | `{ "action": "speed", "interval": 0.5 / 1 / 2 / 4 }` |
 | POST | `/api/control` | `{ "action": "population", "count": 1–8 }` |
+| POST | `/api/control` | `{ "action": "cognition", "mode": "rules" / "hybrid" }` |
 | POST | `/api/events` | `{ "kind": "storm" / "festival" / "clear" }` |
 | POST | `/api/agents/{id}/brain` | Connect/update UI provider, disconnect, or think now |
 | POST | `/api/agents/{id}/join` | Attach external harness; see harness guide |
 | GET | `/api/agents/{id}/observation` | Authenticated observation |
-| POST | `/api/agents/{id}/action` | Authenticated one-step decision |
+| POST | `/api/agents/{id}/action` | Authenticated voice decision or versioned plan |
 | POST | `/api/agents/{id}/leave` | Detach; preserve memory/personality |
 
 SSE uses `data: <JSON>\n\n`, with periodic comment heartbeats. The viewer reconnects
@@ -159,8 +166,9 @@ automatically and receives the latest complete state. The runner uses a conditio
 lock; actions and clock updates are atomic. Sending stream data occurs outside
 that lock. Model calls run on daemon background threads, at most one in flight per villager.
 The clock does not wait for providers. The UI adapter validates each result before
-queuing it, renews its intent for the configured 4/8/16/32 steps, and emits speech
-only once per decision. Storm/festival priorities still win. Automatic requests
+queuing it. Rules mode renews voice for 4/8/16/32 steps and emits speech once;
+Hybrid mode replans on important events and goal boundaries, validating cognitive
+revisions before adoption. Storm/festival priorities still win. Automatic requests
 are at least 10 seconds apart, or 30 after an error. Requests time out after 30
 seconds. Disconnect/reset/population removal discards any in-flight result.
 Provider configuration and keys live outside simulation state; keys are never
@@ -168,19 +176,20 @@ sent back to viewers or recordings. Blank keys preserve an existing key only
 when updating the same endpoint. HTTP is accepted only for loopback providers;
 remote providers use HTTPS. Redirects are rejected to avoid forwarding keys.
 Only the UI adapter makes provider calls; the external harness API remains a
-separate optional route with one-step decisions.
+separate optional route supporting voice slots and explicit plan proposals.
 
 ## Recording
 
-A recording contains `schema_version: 1`, `world`, and a `snapshots` array starting
-with step zero. Tick, population, and world-event changes are recorded. Play/pause,
+A recording contains `schema_version: 1`, `world`, and a `snapshots` array.
+Live recording retains the latest 256 bounded frames, initially starting at step
+zero. Tick, population, and world-event changes are recorded. Play/pause,
 speed and provider attachment alone do not add frames. A headless run produces
 exactly `steps + 1` snapshots. Recordings are immutable viewing history; import
 does not mutate the live world. The viewer validates structure and accepts files
-up to 50 MB. Since each frame includes full memory, long recordings grow faster
-than the number of steps. Recording frames stay in RAM; resumable sessions
-persist atomically on disk unless persistence is disabled. Checkpoint schema 2
-includes enriched memories; schema 1 checkpoints migrate before validation.
+up to 50 MB. Recording frames stay in RAM; complete resumable sessions persist
+atomically on disk unless persistence is disabled. Archive serialization grows
+with experience. Checkpoint schema 3 includes cognitive plans and memories;
+schemas 1 and 2 migrate before validation, retaining Rules mode.
 Replay/snapshot schema remains 1.
 
 ## UI model configuration
@@ -193,7 +202,8 @@ Replay/snapshot schema remains 1.
   "base_url": "https://api.openai.com/v1",
   "model": "YOUR_MODEL_ID",
   "api_key": "YOUR_KEY",
-  "every_steps": 8
+  "every_steps": 8,
+  "embedding_model": null
 }
 ```
 

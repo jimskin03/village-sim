@@ -27,7 +27,7 @@ curl -s http://127.0.0.1:8000/api/agents/mara/observation \
 ```
 
 The observation includes `step`, game time, weather, festival status, the agent's
-full persona, daily goals, relationships and session memory, nearby agents, active
+full persona, daily goals, relationships and a bounded memory view, nearby agents, active
 villager summaries, the pantry, relevant memories, available named places, and a
 `suggested_action` from the rule-based brain. Goals expose their title, target,
 progress and completion state so a harness can help the villager pursue them.
@@ -50,11 +50,47 @@ and supporting `source_ids`, alongside the existing event fields. Retrieval
 never removes older memories. See the [memory contract](cognition-spec.md).
 
 Replace `step: 0` and the example's place/activity with the current observation.
-Copy an entry from `allowed_actions`; providers cannot invent a new activity.
+In Rules mode, copy the `suggested_action`; providers cannot invent an activity.
 Optional `result`, `mood`, `promise`, and `speech` must be selected from
 `result_options`, `mood_options`, `promise_options`, and `speech_options` respectively.
 `thought` is optional explanatory text of at most 200 characters. Omit slots or
 send null to use the rules. The rule-selected action always remains available.
+
+## Autonomous planning
+
+Enable Hybrid in Settings, use `--cognition hybrid` for a new village, or POST
+`{"action":"cognition","mode":"hybrid"}` to `/api/control`. Observations then
+have `decision_contract: "plan-v1"` and several `allowed_actions`. Copy the
+`action`, `location` and `target` of legal entries into a proposal:
+
+```json
+{
+  "contract": "plan-v1",
+  "step": 48,
+  "revision": 3,
+  "goal": "Visit Tom to help with his boat",
+  "steps": [{
+    "action": "visit", "location": "shore", "target": "tom",
+    "duration_minutes": 45, "reason": "Tom asked for help."
+  }],
+  "memory_ids": [42]
+}
+```
+
+Replace step/revision with the observation's `step`/`cognitive_revision` and
+choose current legal entries and resident-accessible memory IDs. Submit through
+the same authenticated action endpoint. Plans allow 1–8 steps, 15–180 minutes
+each in 15-minute increments, with goal/reason text up to 200 characters.
+The world checks legality and travel again at execution. Visits confer no work
+outputs or agreement by the other resident. Duration counts after arrival.
+
+`cognitive_plan` exposes status/progress; `replan_reason` identifies significant
+changes. A stale revision or illegal proposal returns HTTP 400. Legacy voice
+slots retain their old authority. Accepted plans persist through checkpoints
+and may continue without a provider; absent a valid plan, rules continue.
+Model context contains up to twelve relevant and twelve recent memories. Public
+resident views show up to 64 recent memories and total `memory_count`; querying
+can recall older experiences from the complete checkpoint archive.
 
 An accepted action returns `{"accepted":true,"for_step":1}` and is applied on the
 next tick if its context still applies. Only one pending action exists per

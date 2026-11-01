@@ -172,6 +172,8 @@ function render(next) {
     "0",
   );
   $("#population").value = state.agents.length;
+  $("#cognition-mode").value = state.cognition_mode || "rules";
+  $("#cognition-mode").disabled = Boolean(recording);
   if (!recording) $("#speed").value = state.interval;
   $("#play").innerHTML = icon(
     (recording ? !replayPlaying : state.paused) ? "play" : "pause",
@@ -359,7 +361,7 @@ function renderDetails() {
   if (tab === "story") {
     const destination =
       world?.places.find((p) => p.id === a.destination)?.name || a.destination;
-    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}${a.mood ? ` · ${esc(a.mood)}` : ""}</p>${a.thought ? `<p class="agent-thought">${esc(a.thought)}</p>` : ""}<p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
+    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}${a.mood ? ` · ${esc(a.mood)}` : ""}</p>${a.thought ? `<p class="agent-thought">${esc(a.thought)}</p>` : ""}<p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory_count ?? a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
     detail.querySelectorAll("[data-friend]").forEach((button) =>
       button.addEventListener("click", () => selectAgent(button.dataset.friend)),
     );
@@ -373,6 +375,10 @@ function renderDetails() {
           `<div class="plan-item${p === current ? " current" : ""}"><time>${String(p.hour).padStart(2, "0")}:00</time><span>${esc(p.activity)}<small>${esc(world?.places.find((place) => place.id === p.place)?.name || p.place)}</small></span></div>`,
       )
       .join("");
+    if (a.cognitive_plan) {
+      const plan = a.cognitive_plan;
+      detail.insertAdjacentHTML("afterbegin", `<p class="detail-label">${esc(plan.status.toUpperCase())} PLAN</p><p>${esc(plan.goal)}</p>${plan.steps.map((step, index) => `<div class="plan-item${index === plan.index && plan.status === "active" ? " current" : ""}"><time>${step.duration_minutes}m</time><span>${esc(step.action)} · ${esc(step.location)}<small>${esc(step.reason)}</small></span></div>`).join("")}`);
+    }
     if (a.goals?.length)
       detail.insertAdjacentHTML(
         "afterbegin",
@@ -393,6 +399,9 @@ function renderDetails() {
           )
           .join("")
       : '<p class="empty-note">A fresh start. Their first memories are still to come.</p>';
+    if ((a.memory_count ?? a.memory.length) > a.memory.length) {
+      detail.insertAdjacentHTML("afterbegin", `<p class="empty-note">Showing the latest ${a.memory.length} of ${a.memory_count} memories. Saved stories keep the full history.</p>`);
+    }
   }
   detail.scrollTop = scroll;
   if (focusedFriend) {
@@ -429,7 +438,7 @@ function updateBrainFeedback() {
     ? "This villager has left the village. Close this panel and choose a resident."
     : external
       ? "An external harness is attached. Disconnect it before connecting an LLM here."
-      : brain?.error || (brain ? brainDescription(brain) : "Ready to connect.");
+      : brain?.error || brain?.embedding_error || (brain ? brainDescription(brain) : "Ready to connect.");
   $("#llm-feedback").classList.toggle(
     "error",
     Boolean(brain?.error || external || !agent),
@@ -459,6 +468,7 @@ $("#llm-open").addEventListener("click", () => {
     : "Optional for local servers. Keys are kept in server memory for this session.";
   $("#llm-key").closest("label").hidden = $("#llm-provider").value === "ollama";
   $("#llm-frequency").value = brain?.every_steps || 8;
+  $("#llm-embedding-model").value = brain?.embedding_model || "";
   updateBrainFeedback();
   $("#llm-settings").showModal();
 });
@@ -505,6 +515,7 @@ $("#llm-form").addEventListener("submit", async (e) => {
       model: $("#llm-model").value,
       api_key: $("#llm-key").value,
       every_steps: Number($("#llm-frequency").value),
+      embedding_model: $("#llm-embedding-model").value,
     });
     $("#llm-key").value = "";
     acceptLive(next);
@@ -602,6 +613,7 @@ $("#speed").addEventListener("change", (e) =>
 $("#population").addEventListener("change", (e) =>
   control("population", { count: Number(e.target.value) }),
 );
+$("#cognition-mode").addEventListener("change", (e) => control("cognition", { mode: e.target.value }));
 $("#settings-open").addEventListener("click", () => $("#settings").showModal());
 $("#about-open").addEventListener("click", () => {
   $("#settings").close();
@@ -742,6 +754,19 @@ $("#export").addEventListener("click", async () => {
     toast(error.message);
   }
 });
+function validCognitivePlan(plan) {
+  return plan == null || (
+    ["active", "completed", "invalidated"].includes(plan.status) &&
+    typeof plan.goal === "string" && plan.goal.length <= 200 &&
+    Array.isArray(plan.steps) && plan.steps.length > 0 && plan.steps.length <= 8 &&
+    Number.isInteger(plan.index) && plan.index >= 0 && plan.index <= plan.steps.length &&
+    plan.steps.every((step) => step &&
+      ["work", "visit", "rest", "routine"].includes(step.action) &&
+      typeof step.location === "string" && typeof step.reason === "string" &&
+      Number.isInteger(step.duration_minutes) && step.duration_minutes >= 15 &&
+      step.duration_minutes <= 180 && step.duration_minutes % 15 === 0)
+  );
+}
 function validRecording(data) {
   if (
     data?.schema_version !== 1 ||
@@ -802,6 +827,7 @@ function validRecording(data) {
           Object.values(a.relationships).every(
             (fact) => typeof fact === "string" || (Number.isInteger(fact) && fact >= 0),
           ) &&
+          validCognitivePlan(a.cognitive_plan) &&
           (a.goals === undefined ||
             (Array.isArray(a.goals) &&
               a.goals.every(

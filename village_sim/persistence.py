@@ -12,10 +12,11 @@ import tempfile
 
 from .decisions import Action
 from .cognition.memory import make_memory, validate_memory
+from .cognition import planning
 from .simulation import Agent, PERSONAS, Simulation
 
-SCHEMA_VERSION = 2
-_RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending"}
+SCHEMA_VERSION = 3
+_RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
 def export_session(sim: Simulation) -> dict:
@@ -70,11 +71,15 @@ def restore_session(data: dict) -> Simulation:
 
 
 def _migrate(data):
-    """Upgrade v1 records without mutating the imported checkpoint."""
+    """Upgrade older checkpoints without mutating the imported document."""
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int:
         raise ValueError("Unsupported session version")
-    if data["schema_version"] != 1:
+    if data["schema_version"] == 3:
         return data
+    if data["schema_version"] == 2:
+        return _migrate_planning(copy.deepcopy(data))
+    if data["schema_version"] != 1:
+        raise ValueError("Unsupported session version")
     data = copy.deepcopy(data)
     seen = data["state"].pop("seen_texts")
     if not isinstance(seen, dict) or not all(isinstance(key, str) and type(value) is bool
@@ -95,8 +100,65 @@ def _migrate(data):
         if not _events(resident["memory"]):
             raise ValueError("Invalid legacy memories")
         resident["memory"] = [make_memory(upgrade_event(record)) for record in resident["memory"]]
+    return _migrate_planning(data)
+
+
+def _migrate_planning(data):
+    data["state"].setdefault("cognition_mode", "rules")
+    for resident in data["residents"].values():
+        resident.setdefault("cognitive_plan", None)
+        resident.setdefault("cognitive_revision", 0)
+        resident.setdefault("replan_reason", "no_plan")
     data["schema_version"] = SCHEMA_VERSION
     return data
+
+
+def _validate_plan(record, state, world, personas):
+    if not _integer(record["cognitive_revision"]):
+        raise ValueError("Invalid cognitive revision")
+    if record["replan_reason"] is not None and (not isinstance(record["replan_reason"], str)
+                                               or len(record["replan_reason"]) > 200):
+        raise ValueError("Invalid replanning reason")
+    plan = record["cognitive_plan"]
+    if plan is None:
+        return
+    if not isinstance(plan, dict) or plan.get("status") not in ("active", "completed", "invalidated"):
+        raise ValueError("Invalid cognitive plan")
+    if (not all(_integer(plan.get(key)) for key in ("id", "revision", "created_step", "updated_step", "index", "remaining"))
+            or not plan["id"] == plan["revision"] <= record["cognitive_revision"]
+            or not plan["created_step"] <= plan["updated_step"] <= state["step"]
+            or (plan.get("reason") is not None and (not isinstance(plan["reason"], str) or len(plan["reason"]) > 200))):
+        raise ValueError("Invalid plan history")
+    actions = []
+    for step in plan.get("steps", []):
+        if not isinstance(step, dict) or step.get("action") not in ("work", "visit", "rest", "routine"):
+            raise ValueError("Invalid saved action")
+        if step.get("location") not in world.places:
+            raise ValueError("Invalid saved location")
+        if step["action"] == "visit":
+            if step.get("target") not in personas or step["target"] == record["id"]:
+                raise ValueError("Invalid visit target")
+        elif step.get("target") is not None:
+            raise ValueError("Invalid action target")
+        if step["action"] == "work" and step["location"] not in {
+            "fisher": ("jetty", "shore", "nets"), "gardener": ("garden",),
+            "boatwright": ("shore", "nets"),
+        }[record["role"]]:
+            raise ValueError("Work does not match the resident's craft")
+        if step["action"] == "rest" and step["location"] not in (record["home"], "bench", "fire"):
+            raise ValueError("Invalid rest location")
+        actions.append(step)
+    normalized = planning.validate_proposal(plan, {"allowed_actions": actions, "agent": record})
+    if plan["status"] == "completed":
+        valid_progress = plan["index"] == len(normalized["steps"]) and plan["remaining"] == 0
+    else:
+        valid_progress = (plan["index"] < len(normalized["steps"]) and 1 <= plan["remaining"]
+                          <= normalized["steps"][plan["index"]]["duration_minutes"] // 15)
+    if not valid_progress:
+        raise ValueError("Invalid plan progress")
+    if plan["status"] == "active" and (record["replan_reason"] is not None
+                                        or plan["revision"] != record["cognitive_revision"]):
+        raise ValueError("Active plan has a superseded cognitive revision")
 
 
 def _restore(data):
@@ -116,6 +178,8 @@ def _restore(data):
             raise ValueError("Invalid clock")
     if state["weather"] not in ("clear", "storm") or not _events(state["events"]):
         raise ValueError("Invalid weather or journal")
+    if state["cognition_mode"] not in planning.MODES:
+        raise ValueError("Invalid cognition mode")
     # Reject container/type changes for every state field, including future additions.
     for key, value in state.items():
         original = getattr(candidate, key)
@@ -254,6 +318,7 @@ def _restore(data):
             if not _integer(record[key], -100 if key.startswith("last_") else 0):
                 raise ValueError("Invalid work state")
         record = {**record, "provider": None, "provider_until": 0}
+        _validate_plan(record, state, candidate.world, personas)
         restored[aid] = Agent(**record)
     rng = random.Random()
     rng_state = data["rng_state"]

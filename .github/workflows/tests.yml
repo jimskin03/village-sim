@@ -1,0 +1,24 @@
+name: Tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit, HTTP, migration and long-duration tests
+        run: python -m unittest discover -s tests -v
+      - name: Headless smoke test
+        run: python -m village_sim --headless --steps 96 --agents 8 --no-persist --cognition hybrid

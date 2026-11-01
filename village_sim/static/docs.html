@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Lantern Bay · Agent API</title>
 <style>body{max-width:850px;margin:3rem auto;padding:0 1.5rem;background:#152325;color:#e9ead9;font:17px/1.7 system-ui}a{color:#f0c984}pre{background:#0b1719;padding:1rem;overflow:auto;border-radius:10px}code{font-size:.9em}h1,h2{color:#f0c984}table{border-collapse:collapse;width:100%}td,th{text-align:left;border-bottom:1px solid #445756;padding:.6rem}</style></head>
 <body><a href="/">← Return to the village</a><h1>Bring a brain to Lantern Bay</h1>
-<p>The village keeps its own clock, pantry and memories. An external harness can attach to a resident and choose from the same bounded decisions as the rules. Providers never invent activities or resources.</p>
+<p>The village keeps its own clock, pantry and memories. In Rules mode, providers fill bounded voice slots. Enable Hybrid thinking in Settings to let providers choose legal work, rest and visits in short plans. The world controls resources and movement.</p>
 <h2>1. Attach</h2>
 <pre>curl -s http://127.0.0.1:8000/api/agents/mara/join \
   -H 'Content-Type: application/json' -d '{"provider":"My local agent"}'</pre>
@@ -21,6 +21,8 @@
 <p>Replace the example's step, place and activity with the current observation. An accepted decision returns <code>{"accepted":true,"for_step":1}</code>. Only one pending decision exists per resident. Stale steps and choices outside the supplied options return HTTP 400; fetch a fresh observation and reconsider. World events and time changes take precedence. Rules continue while a model is thinking or fails.</p>
 <p>Attachments last eight simulation steps. Authenticated observations and accepted decisions renew the lease. Poll once per step; the clock pauses only through the village controls. To detach, POST an empty JSON object to <code>/api/agents/mara/leave</code> with the same bearer token.</p>
 <h2>Shared controls and saved stories</h2>
+<p>Hybrid observations use <code>decision_contract: "plan-v1"</code>. Submit <code>{"contract":"plan-v1","step":48,"revision":3,"goal":"Visit Tom","steps":[{"action":"visit","location":"shore","target":"tom","duration_minutes":45,"reason":"Tom asked for help."}],"memory_ids":[42]}</code>. Replace step, revision (from <code>cognitive_revision</code>), evidence and actions with the current observation. Use 1–8 legal steps, 15–180 minutes each in multiples of 15; goal/reason text is limited to 200 characters. Revisions and legality are checked before adoption and execution. Important events interrupt plans; rules continue while a provider is unavailable.</p>
+<p>Live resident views contain up to 64 recent memories plus <code>memory_count</code>. Recall queries search the full archive. Live replay retains 256 frames; saved checkpoints retain complete memory and plans.</p>
 <table><tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
 <tr><td>GET</td><td><code>/api/state</code></td><td>Current village and provider status</td></tr>
 <tr><td>GET</td><td><code>/api/stream</code></td><td>Server-sent state updates</td></tr>

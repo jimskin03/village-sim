@@ -67,20 +67,30 @@ For OpenAI, the base URL is `https://api.openai.com/v1`. For other providers,
 use their OpenAI-compatible base URL. The server appends `/chat/completions`.
 Each villager can use a different provider/model. No model ID is hard-coded.
 
-The model receives the villager's persona, a bounded memory view, shared facts,
-pantry and the rule-selected activity. It fills bounded result, mood, speech and
-promise slots; it cannot invent a new activity. A brief thought appears with the
-villager. Intent lasts for the selected number of steps while its context remains valid. The village clock
-keeps advancing while the model thinks; rules handle missing or failed decisions.
+Choose **Settings → Thinking style → Hybrid** to let connected models choose
+work, rest or visits and create short plans from remembered experiences. Plans
+show in the villager's Plan tab. Important events and schedule changes interrupt
+them and request a new plan; routine movement makes no extra model calls.
+Use `--cognition hybrid` when starting a new village from the command line.
+
+The default **Rules** style preserves deterministic routines. In that mode a
+model fills bounded result, mood, speech and promise slots for the rule-selected
+activity. In both styles, the world validates actions and determines movement
+and supplies. The clock keeps advancing while a model thinks, with rule fallback.
 Automatic calls are at least ten real seconds apart, with a thirty-second backoff
 on errors. **Think now** requests a fresh decision, including while paused.
 
 Memory retrieval combines relevance, importance and recency, so an old promise
 can surface after hundreds of chores. It works without embeddings or API calls;
-the memory module also accepts optional vectors from an embedding service.
-Existing saves migrate automatically to checkpoint version 2. The
-[cognition specification](docs/cognition-spec.md) describes this memory increment
-and the proposed hybrid planning, conversations and personal reflection stages.
+optionally set an **Embedding model** under Connection details to generate
+semantic vectors through the same provider. Results are cached, and embedding
+failures fall back to keyword recall. Existing saves migrate automatically to
+checkpoint version 3 and retain Rules mode. The [cognition specification](docs/cognition-spec.md)
+describes implemented memory/planning and the remaining social cognition stages.
+
+Live memory views and replay frames have fixed budgets: the viewer shows up to
+64 recent memories per resident and the latest 256 live frames. The total memory
+count includes the complete archive, retained in every resumable checkpoint.
 
 Keys stay in server memory and are excluded from recordings and browser storage.
 Reconnect after restarting/resetting the server. **Disconnect** keeps the
@@ -110,6 +120,8 @@ village-sim --headless
 
 - `village_sim/world.py`: JSON world, walkable geometry, A* pathfinding.
 - `village_sim/cognition/memory.py`: persistent episodic/semantic records and retrieval.
+- `village_sim/cognition/planning.py`: legal choices and validated autonomous plans.
+- `village_sim/cognition/embeddings.py`: optional bounded semantic-recall cache.
 - `village_sim/simulation.py`: clock, personas, memory, relationships, work and events.
 - `village_sim/decisions.py`: replaceable `decide(agent, observation) -> Action`.
 - `village_sim/providers.py`: optional OpenAI-compatible model adapter.
@@ -138,6 +150,10 @@ use a local mock HTTP provider and cover actual request formatting, independent
 models, invalid replies, slow calls, disconnect races and secret redaction.
 Memory tests cover five-day promise recall, repeated episodes, linked summaries,
 embedding fallback, checkpoint migration, absent residents and disk restart.
+Planning tests include a mock-model Mara visiting Tom because she remembers his
+request, multi-step execution, interruptions and stale replies. Long-duration
+checks cover 10,000 episodes, indexed retrieval and transmitted memory budgets.
+GitHub Actions runs the suite on Python 3.11, 3.13 and 3.14 for pushes and pull requests.
 
 This is a local first demo: rule-based dialogue and outcomes use bounded,
 contextual choices, and the original painting is color-graded throughout the day. The standard-library development server binds to loopback by

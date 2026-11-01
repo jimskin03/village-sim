@@ -10,10 +10,12 @@ import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Condition, Thread
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse, urlsplit
 
 from . import providers
+from .cognition.planning import CONTRACT
+from .cognition.embeddings import EmbeddingCache
 from .simulation import Simulation
 from .persistence import export_session, read_session, restore_session, write_session
 
@@ -56,12 +58,17 @@ class Brain:
     action: dict | None = None
     until: int = 0
     speak: bool = False
+    force: bool = False
+    embedding_cache: EmbeddingCache = field(default_factory=EmbeddingCache, repr=False)
+    embedding_error: str | None = None
 
     def public(self):
         return {
             "base_url": self.config.base_url,
             "model": self.config.model,
             "every_steps": self.config.every_steps,
+            "embedding_model": self.config.embedding_model,
+            "embedding_error": self.embedding_error,
             "has_key": bool(self.config.api_key),
             "status": self.status,
             "error": self.error,
@@ -71,11 +78,11 @@ class Brain:
 
 
 class Session:
-    def __init__(self, count=3, seed=7, interval=2.0, state_path=None):
+    def __init__(self, count=3, seed=7, interval=2.0, state_path=None, cognition_mode="rules"):
         self.condition = Condition()
         self.state_path = Path(state_path) if state_path else None
         saved = read_session(self.state_path) if self.state_path and self.state_path.exists() else None
-        self.sim = restore_session(saved) if saved is not None else Simulation(count, seed)
+        self.sim = restore_session(saved) if saved is not None else Simulation(count, seed, cognition_mode=cognition_mode)
         settings = saved.get("settings", {}) if saved else {}
         self.interval = settings.get("interval", interval)
         if type(self.interval) not in (int, float) or self.interval <= 0:
@@ -141,6 +148,7 @@ class Session:
         self.revision += 1
         if record:
             self.recording.append(self.sim.snapshot())
+            del self.recording[:-256]
         self.condition.notify_all()
 
     def _run(self):
@@ -172,6 +180,7 @@ class Session:
             data, previous.config if previous else None
         )
         self.brains[aid] = Brain(config)
+        self.sim.request_replan(aid, "provider_connected")
         self.tokens.pop(aid, None)
         self.sim.pending.pop(aid, None)
         agent.provider = config.model[:60]
@@ -189,7 +198,7 @@ class Session:
             agent = self.sim.agents[aid]
             agent.provider = brain.config.model[:60]
             agent.provider_until = self.sim.step + 9
-            if brain.action and self.sim.step < brain.until:
+            if self.sim.cognition_mode == "rules" and brain.action and self.sim.step < brain.until:
                 action = dict(brain.action)
                 if not brain.speak:
                     action["speech"] = None
@@ -210,15 +219,18 @@ class Session:
         if not self.running:
             return
         for aid, brain in self.brains.items():
+            hybrid = self.sim.cognition_mode == "hybrid"
             if (
                 aid in self.workers
-                or self.sim.step < brain.next_step
+                or (hybrid and not self.sim.agents[aid].replan_reason and not brain.force)
+                or (not hybrid and self.sim.step < brain.next_step)
                 or time.monotonic() < brain.next_call
             ):
                 continue
             observation = self.sim.observe(aid)
             brain.status = "thinking"
             brain.requests += 1
+            brain.force = False
             self.workers.add(aid)
             Thread(
                 target=self._plan, args=(aid, brain, self.sim, observation), daemon=True
@@ -227,7 +239,9 @@ class Session:
     def _plan(self, aid, brain, sim, observation):
         action, error = None, None
         try:
-            action = providers.plan(brain.config, observation)
+            enriched = self._semantic_observation(aid, brain, sim, observation)
+            if enriched is not None:
+                action = providers.plan(brain.config, enriched)
         except providers.ProviderError as exc:
             error = str(exc)
         except Exception:
@@ -242,12 +256,18 @@ class Session:
             ):
                 self.schedule_brains()
                 return
+            if (observation["decision_contract"] != (CONTRACT if sim.cognition_mode == "hybrid" else "voice-v1")
+                    or sim.agents[aid].cognitive_revision != observation["cognitive_revision"]):
+                brain.status = "waiting"
+                brain.next_call = time.monotonic() + 10
+                self.publish(record=False)
+                return
             if action is not None and not error:
                 try:
-                    # The call may have spanned several steps. Keep whatever
-                    # still fits, and let the rules choose the current place.
+                    # Calls may span several ticks. Plans are revalidated;
+                    # legacy voice slots are fitted to the current routine.
                     fitted = sim.adopt_model_decision(aid, action)
-                    brain.action = {
+                    brain.action = None if fitted.get("contract") == CONTRACT else {
                         key: fitted.get(key) for key in
                         ("place", "activity", "speech", "result", "mood", "promise", "thought")
                     }
@@ -265,6 +285,29 @@ class Session:
             # Bound automatic spend and back off failed providers in real time.
             brain.next_call = time.monotonic() + (30 if error else 10)
             self.publish(record=False)
+
+    def _semantic_observation(self, aid, brain, sim, observation):
+        if not brain.config.embedding_model:
+            return observation
+        records = {memory["id"]: memory for key in ("recent_memories", "relevant_memories")
+                   for memory in observation[key]}
+        query = observation["memory_query"]
+        try:
+            vectors = brain.embedding_cache.encode(brain.config, [query, *(memory["text"] for memory in records.values())])
+        except Exception:
+            brain.embedding_error = "Embeddings unavailable; using lexical memory."
+            return observation
+        with self.condition:
+            if (self.sim is not sim or self.brains.get(aid) is not brain
+                    or sim.agents[aid].cognitive_revision != observation["cognitive_revision"]):
+                return None
+            space = brain.embedding_cache.space(brain.config)
+            for identifier, selected in records.items():
+                memory = sim.memory_store(aid).get(identifier)
+                if memory and selected["text"] == memory["text"]:
+                    memory.update(embedding=vectors[memory["text"]], embedding_model=space)
+            brain.embedding_error = None
+            return sim.observe(aid, memory_query=query[:500], query_embedding=vectors[query], embedding_model=space)
 
     def close(self):
         with self.condition:
@@ -498,9 +541,14 @@ class Handler(BaseHTTPRequestHandler):
                 }
             elif action == "reset":
                 session.brains.clear()
-                session.sim = Simulation(len(sim.agents), sim.seed)
+                session.sim = Simulation(len(sim.agents), sim.seed, cognition_mode=sim.cognition_mode)
                 session.tokens.clear()
                 session.recording = [session.sim.snapshot()]
+            elif action == "cognition":
+                sim.set_cognition_mode(data.get("mode"))
+                for brain in session.brains.values():
+                    brain.action = None
+                session.schedule_brains()
             else:
                 raise ValueError("Unknown control action")
             session.publish(record=action in ("step", "population"))
@@ -525,6 +573,7 @@ class Handler(BaseHTTPRequestHandler):
                     brain = session.brains[aid]
                     brain.next_step = 0
                     brain.next_call = 0
+                    brain.force = True
                     session.schedule_brains()
                     session.publish(record=False)
                 elif data.get("action") == "connect":
@@ -568,8 +617,8 @@ class Handler(BaseHTTPRequestHandler):
         raise ValueError("Unknown endpoint")
 
 
-def serve(host="127.0.0.1", port=8000, count=3, seed=7, interval=2.0, state_path=None):
-    session = Session(count, seed, interval, state_path)
+def serve(host="127.0.0.1", port=8000, count=3, seed=7, interval=2.0, state_path=None, cognition_mode="rules"):
+    session = Session(count, seed, interval, state_path, cognition_mode=cognition_mode)
     server = Server((host, port), session)
     session.thread.start()
     print(f"Lantern Bay is alive at http://{host}:{server.server_port}", flush=True)

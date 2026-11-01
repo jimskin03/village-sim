@@ -6,12 +6,13 @@ clock and default decisions never wait for them. Snapshots contain only JSON.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 import copy
 import random
 from typing import Callable
 
-from .cognition.memory import MemoryStore
+from .cognition.memory import MemoryStore, memory_view
+from .cognition import planning
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -108,14 +109,22 @@ class Agent:
     thought: str | None = None
     mood: str = "content"
     result: str | None = None
+    cognitive_plan: dict | None = None
+    cognitive_revision: int = 0
+    replan_reason: str | None = "no_plan"
 
 
 class Simulation:
-    def __init__(self, count: int = 3, seed: int = 7, decision: Callable = decide):
+    def __init__(self, count: int = 3, seed: int = 7, decision: Callable = decide,
+                 cognition_mode: str = "rules"):
+        if cognition_mode not in planning.MODES:
+            raise ValueError("Choose rules or hybrid cognition")
         self.world = World()
         self.seed = seed
         self.rng = random.Random(seed)
         self.decision = decision
+        self.cognition_mode = cognition_mode
+        self._memory_stores: dict[str, MemoryStore] = {}
         self.step = 0
         self.weather = "clear"
         self.weather_until = 0
@@ -170,13 +179,45 @@ class Simulation:
         self.next_event_id += 1
         self.events.append(item)
         for aid in item["agents"]:
-            MemoryStore(self.residents[aid].memory).add(item)
+            self.memory_store(aid).add(item)
+            if kind in ("promise", "weather", "festival", "goal", "supper") or details.get("significant"):
+                self.request_replan(aid, kind)
         return item
+
+    def memory_store(self, aid):
+        records = self.residents[aid].memory
+        store = self._memory_stores.get(aid)
+        if store is None or store.records is not records:
+            store = self._memory_stores[aid] = MemoryStore(records)
+        return store
+
+    def request_replan(self, aid, reason):
+        if self.cognition_mode != "hybrid":
+            return
+        agent = self.residents[aid]
+        agent.cognitive_revision += 1
+        agent.replan_reason = reason
+        if agent.cognitive_plan and agent.cognitive_plan["status"] == "active":
+            agent.cognitive_plan.update(status="invalidated", reason=reason, updated_step=self.step)
+
+    def set_cognition_mode(self, mode):
+        if mode not in planning.MODES:
+            raise ValueError("Choose rules or hybrid cognition")
+        if mode == self.cognition_mode:
+            return
+        self.cognition_mode = mode
+        self.pending.clear()
+        for agent in self.residents.values():
+            agent.cognitive_revision += 1
+            agent.replan_reason = "mode_changed"
+            if agent.cognitive_plan and agent.cognitive_plan["status"] == "active":
+                agent.cognitive_plan.update(status="invalidated", reason="mode_changed", updated_step=self.step)
 
     def set_population(self, count: int):
         if type(count) is not int or not 1 <= count <= len(PERSONAS):
             raise ValueError("Population must be an integer between 1 and 8")
         wanted = {p[0] for p in PERSONAS[:count]}
+        changed = set(self.agents) != wanted
         for aid in list(self.agents):
             if aid not in wanted:
                 self.event(
@@ -200,6 +241,8 @@ class Simulation:
                 )
         for agent in self.agents.values():
             self._refresh_goals(agent)
+            if changed:
+                self.request_replan(agent.id, "population_changed")
 
     def _social_goal(self, agent: Agent) -> dict | None:
         others = [other for other in self.agents.values() if other.id != agent.id]
@@ -270,7 +313,19 @@ class Simulation:
                 [agent.id],
             )
 
-    def observe(self, aid: str, memory_query: str | None = None) -> dict:
+    @staticmethod
+    def agent_view(agent, memory_limit=64):
+        view = {item.name: copy.deepcopy(getattr(agent, item.name))
+                for item in fields(agent) if item.name != "memory"}
+        view["memory"] = memory_view(agent.memory[-memory_limit:] if memory_limit else [],
+                                     limit=memory_limit, characters=24000)
+        for memory in view["memory"]:
+            memory.update(embedding=None, embedding_model=None)
+        view["memory_count"] = len(agent.memory)
+        return view
+
+    def observe(self, aid: str, memory_query: str | None = None, *, query_embedding=None,
+                embedding_model=None) -> dict:
         if memory_query is not None and (not isinstance(memory_query, str) or len(memory_query) > 500):
             raise ValueError("Memory query must be text, at most 500 characters")
         agent = self.agents[aid]
@@ -285,7 +340,10 @@ class Simulation:
             *(other.name for other in nearby),
             *agent.relationships.values(),
         ])
-        relevant = MemoryStore(agent.memory).retrieve(query, now=self.total_minutes)
+        query = query[:500]
+        relevant = self.memory_store(aid).retrieve(query, now=self.total_minutes,
+                                                  query_embedding=query_embedding,
+                                                  embedding_model=embedding_model)
         observation = {
             "step": self.step,
             "day": self.day,
@@ -294,7 +352,11 @@ class Simulation:
             "festival": self.step < self.festival_until,
             "pantry": dict(self.pantry),
             "last_supper": copy.deepcopy(self.suppers[-1]) if self.suppers else None,
-            "agent": asdict(agent),
+            "agent": self.agent_view(agent),
+            "cognition_mode": self.cognition_mode,
+            "decision_contract": planning.CONTRACT if self.cognition_mode == "hybrid" else "voice-v1",
+            "cognitive_revision": agent.cognitive_revision,
+            "replan_reason": agent.replan_reason,
             "nearby": [
                 {"id": a.id, "name": a.name, "activity": a.activity} for a in nearby
             ],
@@ -306,13 +368,16 @@ class Simulation:
                 for a in self.agents.values()
                 if a.id != aid
             ],
-            "relevant_memories": relevant,
+            "relevant_memories": memory_view(relevant),
+            "recent_memories": memory_view(agent.memory[-12:], characters=3000),
             "memory_query": query,
             "places": self.world.config["places"],
         }
         suggested = decide(agent, observation)
         observation["suggested_action"] = asdict(suggested)
         observation["allowed_actions"] = [{"place": suggested.place, "activity": suggested.activity}]
+        if self.cognition_mode == "hybrid":
+            observation["allowed_actions"] = planning.legal_actions(agent, observation)
         observation["result_options"] = self._result_options(agent, suggested.place)
         observation["mood_options"] = ["content", "hopeful", "worried", "tired"]
         observation["promise_options"] = self._promise_options(agent)
@@ -325,9 +390,26 @@ class Simulation:
         if type(data.get("step")) is not int or data["step"] != self.step:
             raise ValueError("Decision is stale; fetch a fresh observation")
         observation = self.observe(aid)
+        if data.get("contract") == planning.CONTRACT:
+            if self.cognition_mode != "hybrid":
+                raise ValueError("Enable hybrid cognition before submitting plans")
+            if type(data.get("revision")) is not int or data["revision"] != self.agents[aid].cognitive_revision:
+                raise ValueError("Plan revision is stale; fetch a fresh observation")
+            agent = self.agents[aid]
+            proposal = planning.validate_proposal(data, {**observation, "agent": {"memory": agent.memory}})
+            for step in proposal["steps"]:
+                start, end = (agent.x, agent.y), self.world.point(step["location"])
+                if start != end and not self.world.path(start, end):
+                    raise ValueError("Plan destination is unreachable")
+            agent.cognitive_revision += 1
+            agent.cognitive_plan = planning.start_plan(proposal, revision=agent.cognitive_revision, step=self.step)
+            agent.replan_reason = None
+            self.pending.pop(aid, None)
+            self.event(f"{agent.name} plans to {proposal['goal']}", "plan", [aid], source_ids=proposal["memory_ids"])
+            return
         place = data.get("place", observation["suggested_action"]["place"])
         activity = data.get("activity", observation["suggested_action"]["activity"])
-        if {"place": place, "activity": activity} not in observation["allowed_actions"]:
+        if (place, activity) != (observation["suggested_action"]["place"], observation["suggested_action"]["activity"]):
             raise ValueError("Choose a current allowed action; the rules set the activity")
         for field in ("result", "mood", "promise", "speech"):
             value = data.get(field)
@@ -363,8 +445,11 @@ class Simulation:
         )
 
     def adopt_model_decision(self, aid: str, action: dict):
-        """Keep the model's mood, words and result. The current rules choose the body."""
+        """Adopt an explicit hybrid plan or fit legacy voice slots to the rules."""
         observation = self.observe(aid)
+        if action.get("contract") == planning.CONTRACT:
+            self.submit(aid, {**action, "step": self.step, "revision": observation["cognitive_revision"]})
+            return action
         suggested = observation["suggested_action"]
         fitted = {
             "step": self.step,
@@ -422,6 +507,7 @@ class Simulation:
 
     def tick(self):
         previous_day = self.day
+        previous_hour = self.minute // 60
         self.step += 1
         if self.weather == "storm" and self.step >= self.weather_until:
             self.weather = "clear"
@@ -450,6 +536,8 @@ class Simulation:
             if self.day != previous_day:
                 agent.plan = daily_plan(agent)
                 self._refresh_goals(agent)
+            if previous_hour != self.minute // 60 and self.minute // 60 in (0, 6, 10, 13, 15, 18, 21, 23):
+                self.request_replan(agent.id, "schedule_changed")
         for agent in self.agents.values():
             observation = self.observe(agent.id)
             action = self.pending.pop(agent.id, None)
@@ -464,6 +552,20 @@ class Simulation:
                 or action.activity != suggested["activity"]
             ):
                 action = self._with_voice(agent, observation, action)
+            cognitive = agent.cognitive_plan
+            planned = False
+            if self.cognition_mode == "hybrid" and cognitive and cognitive["status"] == "active":
+                try:
+                    if self.step - cognitive["created_step"] > 96:
+                        raise ValueError("Plan expired")
+                    action = planning.action_for(cognitive, observation)
+                    start, end = (agent.x, agent.y), self.world.point(action.place)
+                    if start != end and not self.world.path(start, end):
+                        raise ValueError("Plan destination is unreachable")
+                    planned = True
+                except ValueError:
+                    self.request_replan(agent.id, "action_unavailable")
+                    action = self._with_voice(agent, observation, None)
             if action.mood in observation["mood_options"]:
                 agent.mood = action.mood
             agent.thought = action.thought
@@ -490,9 +592,21 @@ class Simulation:
                 self.event(
                     f"{agent.name}: “{action.speech}”", "conversation", [agent.id]
                 )
-            if arrived and self.step - agent.last_work >= 4 and self._result_options(agent, action.place):
+            productive = not planned or cognitive["steps"][cognitive["index"]]["action"] in ("work", "routine")
+            if arrived and productive and self.step - agent.last_work >= 4 and self._result_options(agent, action.place):
                 agent.last_work = self.step
                 self._work(agent, action.place, action.result)
+            if planned and arrived and cognitive["status"] == "active":
+                cognitive["remaining"] -= 1
+                cognitive["updated_step"] = self.step
+                if cognitive["remaining"] == 0:
+                    cognitive["index"] += 1
+                    if cognitive["index"] == len(cognitive["steps"]):
+                        cognitive["status"] = "completed"
+                        self.event(f"{agent.name} completed a plan: {cognitive['goal']}", "plan", [agent.id])
+                        self.request_replan(agent.id, "plan_completed")
+                    else:
+                        cognitive["remaining"] = cognitive["steps"][cognitive["index"]]["duration_minutes"] // 15
         self._converse()
         return self.snapshot()
 
@@ -546,7 +660,8 @@ class Simulation:
         agent.mood = "content" if success else "worried"
         text = f"{agent.name} {detail}."
         agent.thought = agent.thought or text
-        self.event(text, "work", [agent.id], place=place)
+        self.event(text, "work", [agent.id], place=place,
+                   significant=result in ("torn_mesh", "leaking_boat", "wilted_seedlings"))
         key = f"{self.day}:{agent.id}:{place}"
         summary = self.daily_work.setdefault(key, {"day": self.day, "agent": agent.id, "place": place, "results": {}})
         summary["results"][result] = summary["results"].get(result, 0) + 1
@@ -685,6 +800,7 @@ class Simulation:
             "schema_version": 1,
             "village": self.world.config["name"],
             "seed": self.seed,
+            "cognition_mode": self.cognition_mode,
             "step": self.step,
             "day": self.day,
             "minute": self.minute,
@@ -692,11 +808,11 @@ class Simulation:
             "weather": self.weather,
             "festival": self.step < self.festival_until,
             "pantry": dict(self.pantry),
-            "suppers": copy.deepcopy(self.suppers),
-            "reflections": copy.deepcopy(self.reflections),
+            "suppers": copy.deepcopy(self.suppers[-7:]),
+            "reflections": copy.deepcopy(self.reflections[-7:]),
             "visitor": copy.deepcopy(self.visitor),
-            "work_summaries": copy.deepcopy(list(self.daily_work.values())),
-            "agents": [asdict(a) for a in self.agents.values()],
-            "events": copy.deepcopy(self.events[-80:]),
+            "work_summaries": copy.deepcopy(list(self.daily_work.values())[-32:]),
+            "agents": [self.agent_view(a) for a in self.agents.values()],
+            "events": memory_view(self.events[-80:], limit=80, characters=24000),
             "event_count": self.next_event_id,
         }

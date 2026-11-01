@@ -8,6 +8,9 @@ the simulation's event sequence, so summaries and episodes share one namespace.
 from __future__ import annotations
 
 import copy
+from bisect import insort
+from collections import defaultdict
+import heapq
 import math
 import re
 
@@ -88,6 +91,28 @@ class MemoryStore:
 
     def __init__(self, records: list[dict]):
         self.records = records
+        self._words: list[set[str]] = []
+        self._ids: dict[int, int] = {}
+        self._postings: dict[str, set[int]] = defaultdict(set)
+        self._importance: dict[float, list[tuple]] = defaultdict(list)
+        self.last_candidates = 0
+
+    def _sync(self):
+        if len(self._words) > len(self.records):
+            self.__init__(self.records)
+        for index in range(len(self._words), len(self.records)):
+            record = self.records[index]
+            self._ids[record["id"]] = index
+            words = _tokens(record["content"])
+            self._words.append(words)
+            for word in words:
+                self._postings[word].add(index)
+            insort(self._importance[record["importance"]], (record["timestamp"], record["id"], index))
+
+    def get(self, identifier):
+        self._sync()
+        index = self._ids.get(identifier)
+        return self.records[index] if index is not None else None
 
     def add(self, event: dict, **metadata) -> dict:
         record = make_memory(event, **metadata)
@@ -105,11 +130,26 @@ class MemoryStore:
         """
         if type(limit) is not int or limit < 0:
             raise ValueError("Memory limit must be a nonnegative integer")
+        if not limit:
+            return []
+        self._sync()
         tokens = _tokens(query)
         use_embedding = valid_embedding(query_embedding) and bool(embedding_model)
+        candidates = set()
+        for token in tokens:
+            candidates.update(self._postings.get(token, ()))
+        # A nonmatching record can win only through importance/recency. Within
+        # each importance bucket the newest k dominate all older records.
+        for entries in self._importance.values():
+            candidates.update(entry[2] for entry in entries[-limit:])
+        if use_embedding:
+            candidates.update(index for index, record in enumerate(self.records)
+                              if record.get("embedding_model") == embedding_model)
+        self.last_candidates = len(candidates)
 
-        def rank(record):
-            words = _tokens(record.get("content", record["text"]))
+        def rank(index):
+            record = self.records[index]
+            words = self._words[index]
             lexical = len(tokens & words) / math.sqrt(len(tokens) * len(words)) if tokens and words else 0
             relevance = lexical
             vector = record.get("embedding")
@@ -123,4 +163,20 @@ class MemoryStore:
             score = 0.6 * relevance + 0.25 * record["importance"] + 0.15 * recency
             return score, record["timestamp"], record["id"]
 
-        return copy.deepcopy(sorted(self.records, key=rank, reverse=True)[:limit])
+        selected = heapq.nlargest(limit, candidates, key=rank)
+        return copy.deepcopy([self.records[index] for index in selected])
+
+
+def memory_view(records: list[dict], *, limit: int = 12, characters: int = 6000) -> list[dict]:
+    """Bound transmitted text and evidence without altering the saved archive."""
+    result = []
+    for record in records[:limit]:
+        if characters <= 0:
+            break
+        item = {key: copy.deepcopy(value) for key, value in record.items()
+                if key not in ("embedding", "embedding_model", "source_ids", "content", "text")}
+        content = record["text"][:min(1200, characters)]
+        item.update(text=content, content=content, source_ids=record.get("source_ids", [])[:16])
+        characters -= len(content)
+        result.append(item)
+    return result

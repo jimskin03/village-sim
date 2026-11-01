@@ -134,6 +134,33 @@ class ServerTests(unittest.TestCase):
             self.request("/api/agents/mara/observation?memory_query=" + "x" * 501, token=token)
         self.assertEqual(error.exception.code, 400)
 
+    def test_hybrid_control_and_authenticated_plan_execute_through_http(self):
+        state = self.request("/api/control", {"action": "cognition", "mode": "hybrid"})
+        self.assertEqual(state["cognition_mode"], "hybrid")
+        with self.session.condition:
+            sim = self.session.sim
+            sim.step = 48
+            sim.set_population(3)
+            sim.agents["tom"].destination = "shore"
+        token = self.request("/api/agents/mara/join", {"provider": "Planner"})["token"]
+        observation = self.request("/api/agents/mara/observation", token=token)
+        visit = next(action for action in observation["allowed_actions"] if action.get("target") == "tom")
+        plan = {"step": observation["step"], "revision": observation["cognitive_revision"],
+                "contract": "plan-v1", "goal": "Visit Tom", "memory_ids": [],
+                "steps": [{key: visit[key] for key in ("action", "location", "target")}
+                          | {"duration_minutes": 45, "reason": "Make time to help."}]}
+        result = self.request("/api/agents/mara/action", plan, token)
+        self.assertTrue(result["accepted"])
+        state = self.request("/api/control", {"action": "step"})
+        mara = next(agent for agent in state["agents"] if agent["id"] == "mara")
+        self.assertEqual(mara["destination"], "shore")
+        self.assertEqual(mara["cognitive_plan"]["status"], "active")
+        with self.assertRaises(HTTPError) as error:
+            self.request("/api/control", {"action": "cognition", "mode": "unknown"})
+        self.assertEqual(error.exception.code, 400)
+        state = self.request("/api/control", {"action": "reset"})
+        self.assertEqual(state["cognition_mode"], "hybrid")
+
     def test_stream_sends_immediate_json_snapshot(self):
         with urlopen(self.base + "/api/stream", timeout=3) as stream:
             self.assertEqual(stream.headers["Content-Type"], "text/event-stream")
