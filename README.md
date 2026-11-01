@@ -40,9 +40,10 @@ that lights after dark. Work produces specific successes or failures. Supper at
 dusk spends the supplies, remembers a shortfall, and shapes tomorrow’s goals.
 Storms damage the net and close the jetty; festivals spend supplies and welcome
 a visitor to the guest cottage. Relationships keep the latest shared promise or
-grudge. In Hybrid mode, kept and missed meetings also move a private trust score,
-and a villager who has seen someone break plans will ask a more reliable person
-for help. At midnight, a two-sentence village reflection is pinned above the compact chore
+grudge. In Hybrid mode, a kept meeting raises trust in both directions. A missed
+meeting lowers trust only for the person who waited. A villager who has seen
+someone break plans will ask a more reliable person for help, and a later broken
+promise can retire that preference. At midnight, a two-sentence village reflection is pinned above the compact chore
 log. Hybrid villagers may add their own evidence-backed insights without erasing
 those episodes. Original episodes and repeated chores remain in long-term memory alongside
 those summaries. The painting is graded by hour and map markers show the supplies and repairs.
@@ -179,8 +180,9 @@ Planning tests include a mock-model Mara visiting Tom because she remembers his
 request, multi-step execution, interruptions and stale replies. Long-duration
 checks cover 10,000 episodes, indexed retrieval and transmitted memory budgets.
 Conversation tests cover independent model contexts, counteroffers, matching acceptance,
-attendance, interruption, fallback and migration. Reflection tests cover trust after
-kept and missed meetings, evidence-backed helper choice, rejected insights, and
+attendance, interruption, fallback and migration. Reflection tests cover one-sided
+trust after a missed meeting, evidence-backed helper choice, an insight retired by
+a later broken promise, stale reflection windows, rejected insights, and
 checkpoint migration. Recording tests cover complete exports,
 restart, reset, stable readers and disk failures.
 GitHub Actions runs the suite on Python 3.11, 3.13 and 3.14 for pushes and pull requests.

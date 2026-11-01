@@ -158,12 +158,14 @@ updating either schedule. Invalid/stale turns return HTTP 400. Successful turns
 publish immediately; dialogue is limited to six turns and eight simulation steps.
 Hybrid observations also include `trust` (scores from -1 to 1), `preferred_helpers`
 by task, and `reflection` when a personal reflection is due. Submit
-`reflection-v1` with the current `step` and at most three insights. Each insight
+`reflection-v1` with the current `step`, the reflection context's `evidence_revision`,
+and at most three insights. Each insight
 needs `text` (1–240 characters), `source_ids` from the supplied evidence,
 `participants` who appear in those memories, and `preferred_helper`/`task`
 (`null` unless the insight names one cited participant and a listed task).
-Unsupported evidence is rejected and does not change trust, biography, or memory.
-Trust itself moves only when a meeting is confirmed kept or missed.
+Unsupported or stale evidence is rejected and does not change trust, biography, or memory.
+Trust rises for both people when both attend. It falls only for a person who waited
+while the other did not come.
 
 Observation `commitments` contains your resident's accepted appointments. These
 appointments override individual plans when travel is due. Both participants

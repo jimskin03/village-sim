@@ -8,11 +8,14 @@ from village_sim.persistence import export_session, restore_session
 from village_sim.simulation import Simulation
 
 
-def meeting(sim, partner, *, kept):
+def meeting(sim, partner, *, kept=False, present=None):
     people = ["mara", partner]
-    place = sim.world.point("shore")
+    if present is None:
+        present = people if kept else ["mara"]
+    shore = sim.world.point("shore")
+    away = sim.world.point("fire")
     for aid in people:
-        sim.agents[aid].x, sim.agents[aid].y = place
+        sim.agents[aid].x, sim.agents[aid].y = shore
     start = sim.total_minutes + 30
     sim.conversations.append({
         "id": len(sim.conversations) + 1, "participants": people, "topic": "Plan the boats",
@@ -31,14 +34,27 @@ def meeting(sim, partner, *, kept):
     commitment = sim.commitments[-1]
     origin = sim.world.config["start_minute"]
     interval = sim.world.config["minutes_per_step"]
-    if kept:
-        sim.step = (start - origin) // interval
-        chat.attend(sim)
-        if commitment["attended"] != people:
-            raise AssertionError("kept meeting was not attended")
+    sim.step = (start - origin) // interval
+    for aid in people:
+        sim.agents[aid].x, sim.agents[aid].y = shore if aid in present else away
+    chat.attend(sim)
+    expected = [aid for aid in people if aid in present]
+    if commitment["attended"] != expected:
+        raise AssertionError(f"attendance was {commitment['attended']}")
     sim.step = (start + 30 - origin) // interval
     chat.update(sim)
     return commitment
+
+
+def reflect(sim, aid, insights):
+    request = reflection.context(sim, aid)
+    if request is None:
+        raise AssertionError("reflection is not due")
+    reflection.apply_turn(sim, aid, {
+        "contract": reflection.CONTRACT, "step": sim.step,
+        "evidence_revision": request["evidence_revision"], "insights": insights,
+    })
+    return request
 
 
 class ReflectionTests(unittest.TestCase):
@@ -54,6 +70,8 @@ class ReflectionTests(unittest.TestCase):
             self.assertEqual(kept["status"], "completed")
         self.assertEqual(round(sim.agents["mara"].trust["tom"] * 10), -2)
         self.assertEqual(round(sim.agents["mara"].trust["nell"] * 10), 2)
+        self.assertEqual(sim.agents["tom"].trust, {})
+        self.assertEqual(round(sim.agents["nell"].trust["mara"] * 10), 2)
         trust_memory = next(memory for memory in sim.agents["mara"].memory
                             if memory["kind"] == "trust" and memory.get("partner") == "tom")
         self.assertTrue(any(memory["kind"] == "commitment" and memory["id"] == trust_memory["source_ids"][0]
@@ -81,9 +99,11 @@ class ReflectionTests(unittest.TestCase):
         source = supported["text"]
         before = [memory["id"] for memory in sim.agents["mara"].memory]
         self.assertEqual(reflection.choose_helper(sim, sim.agents["mara"], "repair_boat").id, "tom")
+        request = reflection.context(sim, "mara")
         with self.assertRaises(ValueError):
             reflection.apply_turn(sim, "mara", {
                 "contract": reflection.CONTRACT, "step": sim.step,
+                "evidence_revision": request["evidence_revision"],
                 "insights": [{
                     "text": "I will ask someone I have never met.",
                     "source_ids": [99999], "participants": ["nell"],
@@ -93,14 +113,11 @@ class ReflectionTests(unittest.TestCase):
         self.assertEqual([memory["id"] for memory in sim.agents["mara"].memory], before)
         self.assertEqual(reflection.choose_helper(sim, sim.agents["mara"], "repair_boat").id, "tom")
         self.assertEqual(sim.agents["mara"].trust, {})
-        reflection.apply_turn(sim, "mara", {
-            "contract": reflection.CONTRACT, "step": sim.step,
-            "insights": [{
-                "text": "Nell has been the one who keeps the boats working.",
-                "source_ids": [supported["id"]], "participants": ["nell"],
-                "preferred_helper": "nell", "task": "repair_boat",
-            }],
-        })
+        reflect(sim, "mara", [{
+            "text": "Nell has been the one who keeps the boats working.",
+            "source_ids": [supported["id"]], "participants": ["nell"],
+            "preferred_helper": "nell", "task": "repair_boat",
+        }])
         self.assertEqual(reflection.choose_helper(sim, sim.agents["mara"], "repair_boat").id, "nell")
         self.assertEqual(sim.agents["mara"].persona, persona)
         self.assertEqual(supported["text"], source)
@@ -111,6 +128,113 @@ class ReflectionTests(unittest.TestCase):
         insight = next(memory for memory in sim.agents["mara"].memory if memory["kind"] == "insight")
         self.assertEqual(insight["source_ids"], [supported["id"]])
         self.assertNotIn(insight, sim.reflections)
+
+    def test_only_the_person_who_waited_loses_trust(self):
+        sim = Simulation(2, cognition_mode="hybrid")
+        sim.step = 48
+        missed = meeting(sim, "tom", kept=False)
+        self.assertEqual(missed["status"], "missed")
+        self.assertEqual(missed["attended"], ["mara"])
+        self.assertEqual(round(sim.agents["mara"].trust["tom"] * 10), -1)
+        self.assertEqual(sim.agents["tom"].trust, {})
+        self.assertFalse(any(memory["kind"] == "trust" for memory in sim.agents["tom"].memory))
+        restored = restore_session(json.loads(json.dumps(export_session(sim))))
+        self.assertEqual(restored.commitments[-1]["attended"], ["mara"])
+        self.assertEqual(restored.agents["mara"].trust, sim.agents["mara"].trust)
+
+        neither = Simulation(2, cognition_mode="hybrid")
+        neither.step = 48
+        quiet = meeting(neither, "tom", present=[])
+        self.assertEqual(quiet["status"], "missed")
+        self.assertEqual(quiet["attended"], [])
+        self.assertEqual(neither.agents["mara"].trust, {})
+        self.assertEqual(neither.agents["tom"].trust, {})
+
+    def test_newer_broken_promise_retires_a_helper_insight(self):
+        sim = Simulation(6, cognition_mode="hybrid")
+        supported = sim.event("Nell kept the village boat afloat.", "promise", ["mara", "nell"])
+        for index in range(6):
+            sim.event(f"Mara remembered tide note {index}.", "promise", ["mara"])
+        reflect(sim, "mara", [{
+            "text": "Nell has been the one who keeps the boats working.",
+            "source_ids": [supported["id"]], "participants": ["nell"],
+            "preferred_helper": "nell", "task": "repair_boat",
+        }])
+        self.assertEqual(reflection.choose_helper(sim, sim.agents["mara"], "repair_boat").id, "nell")
+        sim.step = 48
+        missed = meeting(sim, "nell", kept=False)
+        self.assertEqual(missed["attended"], ["mara"])
+        self.assertEqual(round(sim.agents["mara"].trust["nell"] * 10), -1)
+        self.assertEqual(sim.agents["nell"].trust, {})
+        self.assertEqual(reflection.choose_helper(sim, sim.agents["mara"], "repair_boat").id, "tom")
+        # Trust is tied again, but the newer decline still retires the insight.
+        sim.agents["mara"].trust["nell"] = 0.0
+        sim.agents["mara"].relationships.pop("nell", None)
+        self.assertEqual(reflection.choose_helper(sim, sim.agents["mara"], "repair_boat").id, "tom")
+
+    def test_stale_reflection_keeps_the_new_evidence_window(self):
+        from village_sim.providers import ProviderConfig
+        from village_sim.server import Brain, Session
+
+        sim = Simulation(1, cognition_mode="hybrid")
+        for index in range(6):
+            sim.event(f"Mara noted tide {index}.", "promise", ["mara"])
+        request = reflection.context(sim, "mara")
+        cited = request["evidence"][0]["id"]
+        sim.event("Mara noted a later tide.", "promise", ["mara"])
+        with self.assertRaises(ValueError):
+            reflection.apply_turn(sim, "mara", {
+                "contract": reflection.CONTRACT, "step": sim.step,
+                "evidence_revision": request["evidence_revision"],
+                "insights": [{
+                    "text": "I will remember the earlier tide.",
+                    "source_ids": [cited], "participants": [],
+                    "preferred_helper": None, "task": None,
+                }],
+            })
+        self.assertFalse(any(memory["kind"] == "insight" for memory in sim.agents["mara"].memory))
+        self.assertTrue(reflection.due(sim, "mara"))
+
+        from village_sim import providers
+        session = Session(count=1, cognition_mode="hybrid", interval=60)
+        previous = providers.reflect
+        try:
+            with session.condition:
+                session.paused = True
+            live = session.sim
+            for index in range(6):
+                live.event(f"Mara noted tide {index}.", "promise", ["mara"])
+            original = reflection.context(live, "mara")
+            live.event("Mara noted a later tide.", "promise", ["mara"])
+            brain = Brain(ProviderConfig("http://127.0.0.1:9/v1", "mock", "secret"))
+            session.brains["mara"] = brain
+
+            def reply(source):
+                def reflect_now(config, context):
+                    return {"contract": reflection.CONTRACT, "insights": [{
+                        "text": "I will remember this tide.",
+                        "source_ids": [source], "participants": [],
+                        "preferred_helper": None, "task": None,
+                    }]}
+                return reflect_now
+
+            providers.reflect = reply(original["evidence"][0]["id"])
+            session._reflect("mara", brain, live, original)
+            self.assertEqual(brain.status, "waiting")
+            self.assertEqual(brain.decisions, 0)
+            self.assertFalse(any(memory["kind"] == "insight" for memory in live.agents["mara"].memory))
+            self.assertTrue(reflection.due(live, "mara"))
+            fresh = reflection.context(live, "mara")
+            self.assertNotEqual(fresh["evidence_revision"], original["evidence_revision"])
+            providers.reflect = reply(fresh["evidence"][0]["id"])
+            session._reflect("mara", brain, live, fresh)
+            self.assertEqual(brain.decisions, 1)
+            self.assertEqual(brain.status, "ready")
+            self.assertTrue(any(memory["kind"] == "insight" for memory in live.agents["mara"].memory))
+            self.assertFalse(reflection.due(live, "mara"))
+        finally:
+            providers.reflect = previous
+            session.close()
 
     def test_day_end_reflection_is_private_hourly_and_rules_mode_stays_quiet(self):
         hybrid = Simulation(1, cognition_mode="hybrid")

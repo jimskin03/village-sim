@@ -322,22 +322,31 @@ class Session:
                 self.condition.notify_all()
                 self.schedule_brains()
                 return
-            if reflection.context(sim, aid) is None:
+            current = reflection.context(sim, aid)
+            if not reflection.same_evidence(request, current):
+                # A new memory opened a different window. Discard this result
+                # instead of reflecting on evidence the model did not see.
                 brain.status = "waiting"
-            else:
+                brain.next_call = time.monotonic() + 10
+                self.publish(record=False)
+                self.schedule_brains()
+                return
+            try:
+                if action is not None:
+                    reflection.apply_turn(sim, aid, {
+                        **action, "step": sim.step,
+                        "evidence_revision": request["evidence_revision"],
+                    })
+                    brain.decisions += 1
+                else:
+                    reflection.fallback(sim, aid)
+            except ValueError:
+                error = "The reflection no longer fits this villager. A private reflection was used."
                 try:
-                    if action is not None:
-                        reflection.apply_turn(sim, aid, {**action, "step": sim.step})
-                        brain.decisions += 1
-                    else:
-                        reflection.fallback(sim, aid)
+                    reflection.fallback(sim, aid)
                 except ValueError:
-                    error = "The reflection no longer fits this villager. A private reflection was used."
-                    try:
-                        reflection.fallback(sim, aid)
-                    except ValueError:
-                        pass
-                brain.status = "error" if error else "ready"
+                    pass
+            brain.status = "error" if error else "ready"
             brain.error = error
             brain.next_call = time.monotonic() + (30 if error else 10)
             self.publish()

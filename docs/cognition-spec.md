@@ -232,9 +232,10 @@ same contract through the authenticated action endpoint with the current `step`.
 
 Accepted appointments preempt individual plans when travel becomes due. Participants
 attempt travel using A*, spend the agreed window at the destination, and record
-joint attendance only when both are present during that window. Work remains
-world-controlled and requires the matching craft and attendance. Outcomes are
-completed, missed or cancelled, with memories for both residents. Weather, festivals,
+attendance separately. Work remains world-controlled and runs only while both
+people are present and the matching craft is there. Outcomes are completed,
+missed or cancelled, with memories for both residents. A completed meeting is one
+both people attended. A missed meeting can record that only one person waited. Weather, festivals,
 leaving the village or switching to Rules cancel outstanding appointments. Provider
 disconnection preserves already accepted commitments. These appointments are shown
 in the Plan tab alongside the latest transcript; observations expose a resident's
@@ -258,14 +259,22 @@ memories. Invalid evidence is rejected and changes nothing. Accepted insights ar
 private semantic memories linked to their sources. Original episodes stay. The
 shared midnight journal summary remains a separate village record.
 
-Trust is a score from -1 to 1 for each other resident. A confirmed kept meeting
-adds 0.1 and a confirmed missed meeting subtracts 0.1, clamped to that range and
-linked to the outcome memory. Cancellation does not move trust. Models may
-describe what the evidence means, but they cannot rewrite biography, episodes,
-or the score. Observations expose `trust` and `preferred_helpers`. When no model
-is connected, a resident whose trust or a grounded insight distinguishes a helper
-adopts a visit plan toward that person. Rules mode keeps the shared journal
-reflection and does not update personal trust.
+Trust is a score from -1 to 1 for each other resident. When both people attend,
+each score toward the other rises by 0.1. When one person waits and the other
+does not come, only the person who waited loses 0.1 trust in the absent person.
+If neither attends, trust stays unchanged. Cancellation does not move trust.
+Scores stay in [-1, 1] and each change is linked to the outcome memory. Models
+may describe what the evidence means, but they cannot rewrite biography,
+episodes, or the score. A helper insight is followed only while that person is
+still at least as trusted as the other eligible people and no newer trust memory
+records a loss of trust in them. The reflection request carries
+`evidence_revision` (cursor, pending count, and newest memory id). A delayed
+model result is kept only when that revision still matches; otherwise it is
+discarded and does not close the new evidence window. Observations expose
+`trust` and `preferred_helpers`. When no model is connected, a resident whose
+trust or a still-current insight distinguishes a helper adopts a visit plan
+toward that person. Rules mode keeps the shared journal reflection and does not
+update personal trust.
 
 ### Perception and knowledge (stage 5)
 

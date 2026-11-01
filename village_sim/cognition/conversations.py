@@ -275,7 +275,8 @@ def update(sim, *, advance=True):
                 or any(aid not in sim.agents for aid in people)):
             conclude(sim, commitment, "cancelled", "participants unavailable")
         elif sim.total_minutes >= terms["start_minute"] + terms["duration_minutes"]:
-            conclude(sim, commitment, "completed" if commitment["attended"] == people else "missed", "meeting time ended")
+            showed = [person for person in people if person in commitment["attended"]]
+            conclude(sim, commitment, "completed" if showed == people else "missed", "meeting time ended")
 
 
 def conclude(sim, commitment, status, reason):
@@ -308,15 +309,30 @@ def meeting_action(sim, aid):
 def attend(sim):
     for commitment in sim.commitments:
         terms = commitment["terms"]
-        if (commitment["status"] == "scheduled"
-                and terms["start_minute"] <= sim.total_minutes < terms["start_minute"] + terms["duration_minutes"]
-                and all(aid in sim.agents and (sim.agents[aid].x, sim.agents[aid].y) == sim.world.point(terms["place"])
-                        for aid in terms["participants"])):
-            if not commitment["attended"]:
-                commitment["attended"] = list(terms["participants"])
-                sim.event(f"Both villagers attended their meeting to {terms['task'].replace('_', ' ')} at {terms['place']}.",
-                          "commitment", terms["participants"])
-            for aid in terms["participants"]:
+        people = terms["participants"]
+        if (commitment["status"] != "scheduled"
+                or not (terms["start_minute"] <= sim.total_minutes < terms["start_minute"] + terms["duration_minutes"])):
+            continue
+        place = sim.world.point(terms["place"])
+        present = [aid for aid in people
+                   if aid in sim.agents and (sim.agents[aid].x, sim.agents[aid].y) == place]
+        before = [aid for aid in people if aid in commitment["attended"]]
+        commitment["attended"] = [aid for aid in people if aid in before or aid in present]
+        if commitment["attended"] == people and before != people:
+            sim.event(f"Both villagers attended their meeting to {terms['task'].replace('_', ' ')} at {terms['place']}.",
+                      "commitment", people, task=terms["task"])
+        else:
+            for aid in commitment["attended"]:
+                if aid in before:
+                    continue
+                other = next(person for person in people if person != aid)
+                sim.event(
+                    f"{sim.residents[aid].name} waited at {terms['place']} for the meeting to "
+                    f"{terms['task'].replace('_', ' ')}; {sim.residents[other].name} was not there.",
+                    "commitment", [aid], task=terms["task"],
+                )
+        if all(aid in present for aid in people):
+            for aid in people:
                 agent = sim.agents[aid]
                 if (agent.role in CRAFTS.get(terms["task"], ()) and sim.step - agent.last_work >= 4
                         and sim._result_options(agent, terms["place"])):
@@ -348,6 +364,19 @@ def start_nearby(sim):
                                       "created_step": sim.step, "transcript": [], "offer": None,
                                       "offered_by": None, "reason": None})
             first.last_chat = other.last_chat = sim.step
+
+
+def _attendance(commitment):
+    """Return attendance in participant order, or None when it names someone else."""
+    terms = commitment.get("terms")
+    attended = commitment.get("attended")
+    participants = terms.get("participants") if isinstance(terms, dict) else None
+    if not isinstance(participants, list) or not isinstance(attended, list):
+        return None
+    if len(attended) != len(set(attended)):
+        return None
+    ordered = [person for person in participants if person in set(attended)]
+    return ordered if ordered == attended else None
 
 
 def validate_state(sim):
@@ -424,8 +453,8 @@ def validate_state(sim):
                 or commitment["conversation_id"] not in agreements
                 or commitment["terms"] != agreements[commitment["conversation_id"]]
                 or commitment["status"] not in ("scheduled", "completed", "missed", "cancelled")
-                or commitment["attended"] not in ([], commitment["terms"]["participants"])
-                or (commitment["status"] == "completed" and not commitment["attended"])
+                or _attendance(commitment) is None
+                or (commitment["status"] == "completed" and commitment["attended"] != commitment["terms"]["participants"])
                 or (commitment["reason"] is not None and (not isinstance(commitment["reason"], str) or len(commitment["reason"]) > 200))):
             raise ValueError("Invalid or unaccepted commitment")
         used.add(commitment["conversation_id"])

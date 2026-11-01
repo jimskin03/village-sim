@@ -2,7 +2,9 @@
 
 Insights are interpretations. They can cite only memories the resident already
 holds, and they never rewrite biography, episodes, or trust scores. Trust moves
-by one tenth when a meeting is confirmed kept or missed, and it stays in [-1, 1].
+by one tenth and stays in [-1, 1]. Both people gain trust when both attend. Only
+a person who waited loses trust in someone who did not come. A helper insight
+stands only while newer evidence still supports that person.
 """
 
 from __future__ import annotations
@@ -75,8 +77,23 @@ def _insight_supported(sim, agent, memory):
     return helper in _cited_people(found)
 
 
+def _insight_current(sim, agent, memory, allowed):
+    """Keep a helper insight only while current trust and newer evidence agree."""
+    helper = memory.get("preferred_helper")
+    if helper not in allowed or not _insight_supported(sim, agent, memory):
+        return False
+    score = agent.trust.get(helper, 0.0)
+    if any(score < agent.trust.get(other, 0.0) for other in allowed):
+        return False
+    return not any(
+        later["id"] > memory["id"] and later.get("kind") == "trust"
+        and later.get("partner") == helper and later.get("change") == "down"
+        for later in agent.memory
+    )
+
+
 def choose_helper(sim, agent, task):
-    """Prefer a grounded insight, then the highest trust, for this task."""
+    """Prefer a still-supported insight, then the highest trust, for this task."""
     crafts = _social().CRAFTS
     others = [other for other in sim.agents.values() if other.id != agent.id]
     if task in crafts:
@@ -89,9 +106,8 @@ def choose_helper(sim, agent, task):
     for memory in reversed(agent.memory):
         if memory.get("kind") != "insight" or memory.get("task") not in (None, task):
             continue
-        helper = memory.get("preferred_helper")
-        if helper in allowed and _insight_supported(sim, agent, memory):
-            return allowed[helper]
+        if _insight_current(sim, agent, memory, allowed):
+            return allowed[memory["preferred_helper"]]
 
     def rank(other):
         return (
@@ -104,13 +120,14 @@ def choose_helper(sim, agent, task):
 
 
 def _distinguished(sim, agent, task, helper):
-    if any(memory.get("kind") == "insight" and memory.get("preferred_helper") == helper.id
-           and memory.get("task") in (None, task) and _insight_supported(sim, agent, memory)
+    others = [other for other in sim.agents.values() if other.id != agent.id
+              and (task not in _social().CRAFTS or other.role in _social().CRAFTS[task])]
+    allowed = {other.id: other for other in others}
+    if any(memory.get("kind") == "insight" and memory.get("task") in (None, task)
+           and _insight_current(sim, agent, memory, allowed)
+           and memory.get("preferred_helper") == helper.id
            for memory in agent.memory):
         return True
-    crafts = _social().CRAFTS
-    others = [other for other in sim.agents.values() if other.id != agent.id
-              and (task not in crafts or other.role in crafts[task])]
     scores = [agent.trust.get(other.id, 0.0) for other in others]
     mine = agent.trust.get(helper.id, 0.0)
     return bool(scores) and mine == max(scores) and max(scores) > min(scores)
@@ -132,14 +149,26 @@ def context(sim, aid):
         "trust": {partner: agent.trust[partner] for partner in sorted(agent.trust)},
         "goals": copy.deepcopy(agent.goals),
         "evidence": evidence,
+        # Cursor, pending count, and newest id. Any new memory changes it.
+        "evidence_revision": [agent.reflection_cursor, len(pending), pending[-1]["id"]],
         "tasks": list(_social().TASKS),
     }
 
 
+def same_evidence(request, current):
+    """True when a delayed reflection still belongs to this evidence window."""
+    return (isinstance(request, dict) and isinstance(current, dict)
+            and request.get("speaker") == current.get("speaker")
+            and request.get("evidence_revision") == current.get("evidence_revision"))
+
+
 def validate_insights(data, request):
     """Accept at most three interpretations grounded in the supplied evidence."""
-    if not isinstance(data, dict) or data.get("contract") != CONTRACT or set(data) - {"step"} != {"contract", "insights"}:
+    if (not isinstance(data, dict) or data.get("contract") != CONTRACT
+            or set(data) - {"step", "evidence_revision"} != {"contract", "insights"}):
         raise ValueError("Invalid reflection")
+    if "evidence_revision" in data and data["evidence_revision"] != request.get("evidence_revision"):
+        raise ValueError("Reflection evidence is stale")
     insights = data.get("insights")
     evidence = {memory["id"]: memory for memory in request.get("evidence", [])
                 if isinstance(memory, dict) and type(memory.get("id")) is int}
@@ -205,6 +234,8 @@ def apply_turn(sim, aid, data):
     request = context(sim, aid)
     if request is None:
         raise ValueError("Reflection is not due")
+    if data.get("evidence_revision") != request["evidence_revision"]:
+        raise ValueError("Reflection evidence is stale")
     _store(sim, aid, validate_insights(data, request)["insights"])
 
 
@@ -264,7 +295,8 @@ def fallback(sim, aid):
     helper = _helper_insight(sim, aid, request["evidence"])
     if helper is not None:
         insights.append(helper)
-    apply_turn(sim, aid, {"contract": CONTRACT, "step": sim.step, "insights": insights})
+    apply_turn(sim, aid, {"contract": CONTRACT, "step": sim.step,
+                          "evidence_revision": request["evidence_revision"], "insights": insights})
 
 
 def consider(sim, *, day_end=False):
@@ -335,18 +367,24 @@ def adjust_trust(sim, commitment, outcome):
         return
     people = commitment["terms"]["participants"]
     task = commitment["terms"]["task"]
-    after_delta = 0.1 if status == "completed" else -0.1
-    for aid in people:
-        other = next(person for person in people if person != aid)
+    attended = [person for person in people if person in commitment["attended"]]
+    if status == "completed":
+        changes = [(aid, other, 0.1) for aid in people for other in people if other != aid]
+    else:
+        # Waiting is the experience of a broken promise. Absence is not.
+        changes = [(aid, other, -0.1) for aid in attended for other in people
+                   if other != aid and other not in attended]
+    for aid, other, delta in changes:
         agent = sim.residents[aid]
         before = agent.trust.get(other, 0.0)
-        updated = bump_trust(before, after_delta)
+        updated = bump_trust(before, delta)
         if updated == before:
             continue
         agent.trust[other] = updated
-        direction = "rose" if after_delta > 0 else "fell"
+        direction = "rose" if delta > 0 else "fell"
         sim.event(
             f"{agent.name}'s trust in {sim.residents[other].name} {direction} to {updated:.1f} "
             f"after a {status} meeting.",
             "trust", [aid], source_ids=[outcome["id"]], partner=other, task=task,
+            change="up" if delta > 0 else "down",
         )
