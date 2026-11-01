@@ -31,7 +31,10 @@ def initial_sources():
 
 
 def supper_need(sim):
-    count = len(sim.agents)
+    return supper_need_from_count(len(sim.agents))
+
+
+def supper_need_from_count(count):
     return {"fish": count, "herbs": max(1, (count + 2) // 3)}
 
 
@@ -123,9 +126,13 @@ def suggested_action(agent, observation):
     # Work toward the shared reserve after today's initial craft goal. Critical
     # needs may interrupt that goal; nobody has an exclusive survival role.
     free = [a for a in free if a["work_completed"]]
+    supper = supper_need_from_count(observation["villager_count"])
     for resource in ("water", "food"):
         center = observation["collection_centers"][resource]
-        if not center["low"] or not free:
+        missing_fish = max(0, supper["fish"] - observation["pantry"]["fish"])
+        missing_herbs = max(0, supper["herbs"] - observation["pantry"]["herbs"])
+        supper_short = resource == "food" and (missing_fish or missing_herbs)
+        if not (center["low"] or supper_short) or not free:
             continue
         if resource == "water":
             places = usable_sources(observation)
@@ -143,7 +150,10 @@ def suggested_action(agent, observation):
         points = {p["id"]: p for p in observation["places"]}
         ranked = sorted(free, key=lambda a: (
             min(abs(a["x"] - points[p]["x"]) + abs(a["y"] - points[p]["y"]) for p in places), a["id"]))
-        helpers = max(1, math.ceil((center["daily_need"] - center["level"]) / units))
+        deficit = max(0, center["daily_need"] - center["level"])
+        if resource == "food":
+            deficit = max(deficit, missing_fish * FISH_FOOD if missing_fish else missing_herbs * HERB_FOOD)
+        helpers = max(1, math.ceil(deficit / units))
         selected = ranked[:helpers]
         if any(a["id"] == agent.id for a in selected):
             return Action(nearest(agent, observation, places), activity)

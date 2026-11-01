@@ -314,6 +314,23 @@ class ReflectionTests(unittest.TestCase):
         self.assertTrue(rules.reflections)
         self.assertFalse(any(memory["kind"] == "insight" for memory in rules.agents["mara"].memory))
 
+    def test_fallback_does_not_reflect_on_its_own_summaries(self):
+        sim = Simulation(1, cognition_mode="hybrid")
+        episode = sim.event("Mara promised to bring fish to supper.", "promise", ["mara"])
+        reflection.consider(sim, day_end=True)
+        insights = [m for m in sim.agents["mara"].memory if m["kind"] == "insight"]
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]["text"], episode["text"])
+        self.assertEqual(insights[0]["source_ids"], [episode["id"]])
+        for _ in range(3):
+            sim.step += reflection.HOUR
+            reflection.consider(sim, day_end=True)
+            self.assertFalse(reflection.due(sim, "mara"))
+        self.assertEqual([m for m in sim.agents["mara"].memory if m["kind"] == "insight"], insights)
+        legacy = {"id": 99, "importance": 0.9,
+                  "text": "I will remember this: I will remember this: A meeting was agreed."}
+        self.assertEqual(reflection._summary([legacy])["text"], "A meeting was agreed.")
+
     def test_schema_four_gains_trust_without_changing_the_saved_file(self):
         saved = export_session(Simulation(2, cognition_mode="hybrid"))
         saved["schema_version"] = 4

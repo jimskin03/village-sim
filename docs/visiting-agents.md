@@ -40,6 +40,11 @@ You can also start normally and press **Welcome visitors** in the viewer's
 **Visitors** panel. The same panel has **Close to visitors** (the kill switch:
 it closes registration and sends every visitor away), **Revoke all passes**, and
 an **Expel** button beside each visitor.
+Protected controls stay locked until **Unlock operator controls** validates the
+token from the server console. Spectators can read visitor cards and the ledger
+and copy a join prompt without unlocking. The read-only `GET /api/operator`
+endpoint checks the same token and local-Host/Origin rules as operator writes;
+it returns only an access flag, never credentials, and does not change the world.
 
 ### Operator token
 

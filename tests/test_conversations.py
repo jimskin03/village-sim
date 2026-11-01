@@ -78,6 +78,26 @@ class ConversationTests(unittest.TestCase):
             chat.apply_turn(sim, "mara", turn(sim, "mara", "accept", terms(sim, duration_minutes=30)))
         self.assertEqual(export_session(sim), before)
 
+    def test_agreement_uses_a_day_clock_and_place_name(self):
+        offer = terms(self.sim)
+        chat.apply_turn(self.sim, "mara", turn(self.sim, "mara", "propose", offer))
+        chat.apply_turn(self.sim, "tom", turn(self.sim, "tom", "accept", offer))
+        fact = self.sim.agents["mara"].relationships["tom"]
+        self.assertIn("Quiet shore", fact)
+        self.assertIn("day 2 at 07:30", fact)
+        self.assertNotIn("at minute", fact)
+        self.assertEqual(self.sim.commitments[0]["terms"], offer)
+
+    def test_local_dialogue_varies_by_person_and_turn(self):
+        chat.apply_turn(self.sim, "mara", turn(self.sim, "mara", "say"))
+        for _ in range(5):
+            chat.fallback(self.sim, chat.speaker(self.conversation))
+        speeches = [t["speech"] for t in self.conversation["transcript"]]
+        self.assertGreaterEqual(len(set(speeches)), 4)
+        self.assertNotIn("I am glad we have time to talk.", speeches)
+        self.assertTrue(any("Mara" in speech for speech in speeches))
+        self.assertTrue(any("Tom" in speech for speech in speeches))
+
     def test_invalid_terms_overlap_and_unreachable_places_reject_atomically(self):
         for changes in ({"participants": ["mara", "lin"]}, {"task": "fly"}, {"place": "ocean"},
                         {"duration_minutes": True}, {"duration_minutes": 16}, {"start_minute": self.sim.total_minutes},
@@ -159,7 +179,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(self.sim.commitments, [])
         self.assertEqual(self.conversation["status"], "active")
         self.assertEqual(self.conversation["transcript"][-1]["move"], "say")
-        self.assertIn("think about that", self.conversation["transcript"][-1]["speech"])
+        self.assertIn("Mara", self.conversation["transcript"][-1]["speech"])
 
         declined = Simulation(2, cognition_mode="hybrid")
         setup_chat(declined)

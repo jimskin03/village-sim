@@ -149,6 +149,29 @@ class SurvivalTests(unittest.TestCase):
         self.assertEqual(obs["villager_count"], 3)
         self.assertTrue(next(a for a in obs["present_villagers"] if a["id"] == "tom")["collapsed"])
 
+    def test_large_herb_stock_does_not_hide_the_supper_fish_shortage(self):
+        sim = Simulation(3)
+        sim.step = 48
+        sim.pantry.update(fish=0, herbs=170, water=100)
+        for agent in sim.agents.values():
+            agent.goals[0].update(completed=True, progress=3)
+        obs = sim.observe("mara")
+        self.assertFalse(obs["collection_centers"]["food"]["low"])
+        self.assertEqual(obs["suggested_action"]["place"], "jetty")
+        self.assertEqual(obs["suggested_action"]["activity"], "fishing for shared food")
+        sim.pantry["net_condition"] = "torn"
+        self.assertEqual(sim.observe("mara")["suggested_action"]["place"], "nets")
+
+    def test_boatwright_repairs_a_leak_after_completing_daily_work(self):
+        sim = Simulation(3)
+        sim.step = 64  # 10:00, when the ordinary secondary task is at the nets.
+        sim.pantry.update(fish=10, herbs=170, water=100, boat_condition="leaking")
+        tom = sim.agents["tom"]
+        tom.goals[0].update(completed=True, progress=3)
+        action = sim.observe("tom")["suggested_action"]
+        self.assertEqual(action["place"], "shore")
+        self.assertIn("leaking", action["activity"])
+
     def test_collapse_blocks_all_actions_and_recovers_next_step(self):
         sim = Simulation(2, decision=lambda a, o: Action("bench", "resting"), cognition_mode="hybrid")
         sim.step = 48

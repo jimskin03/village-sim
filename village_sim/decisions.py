@@ -49,6 +49,8 @@ def decide(agent, observation: dict) -> Action:
     if 6 <= hour < 18 and hour not in (13, 14):
         if agent.role in ("fisher", "boatwright") and pantry.get("net_condition") == "torn":
             return Action("nets", "mending the torn village net")
+        if agent.role == "boatwright" and pantry.get("boat_condition") == "leaking":
+            return Action("shore", "repairing the leaking village boat")
     item = next(p for p in reversed(agent.plan) if p["hour"] <= hour)
     work = next((g for g in agent.goals if g["id"] == "work"), None)
     if (6 <= hour < 13 or 15 <= hour < 18) and work and not work["completed"]:

@@ -27,13 +27,24 @@ Select a villager on the map or a card to inspect their persona, daily goals,
 friendships, daily plan and session memories. Goal progress and familiar faces
 appear in **Story**; select a friend to take a closer look at them.
 
-The village fills the browser window with floating playback and map controls.
+The village starts in **Overview**, fitting the whole map between the playback
+and map controls. **+** and **−** zoom the map; Overview fits it again. Names
+stay readable while the map changes size, and hovering a villager shows their
+role and activity. **Routine** means daily routines; **Planning** means Hybrid
+with local replies when no AI provider is connected.
 Open **Villagers**, **Journal** or **Events** from the dock when you want more
-detail; close a panel or press Escape to return to the unobstructed village.
-Selecting a villager opens their details and centers the map on them. Drag,
-scroll or swipe to explore the enlarged canvas, use **Overview** to see the whole
-village, and toggle labels or zoom with the map controls. The page stays in place
-while panels scroll independently.
+detail. Panels dock beside the map on desktop and below it on phones; close one
+or press Escape to return to the full view. Select a villager to open their
+details, or drag, scroll or swipe to explore a zoomed map. The page stays in
+place while panels scroll independently. Running/paused status and the Sound
+on/off button remain labelled. Choose ¼× speed to read at a slower pace.
+
+When a village requires an operator token, its controls are locked for viewers.
+Choose **Unlock operator controls** in Settings or Visitors and enter the token
+from the server console. A read-only check validates access before enabling
+controls. Map exploration, journal reading and copying a join prompt remain
+available to everyone. Local sessions that do not require a token unlock
+automatically.
 
 The village shares a pantry: fish, herbs, net and boat condition, and a hearth
 that lights after dark. Work produces specific successes or failures. Supper at
@@ -45,7 +56,9 @@ at the meeting at the same time. A missed meeting lowers trust only for the
 person who waited while the other never came. A villager who has seen
 someone break plans will ask a more reliable person for help, and a later broken
 promise can retire that preference. At midnight, a two-sentence village reflection is pinned above the compact chore
-log. Hybrid villagers may add their own evidence-backed insights without erasing
+log. The journal folds repeated agreements and shows day/clock times, including
+in older stories; the memory archive retains every original episode. Hybrid
+villagers may add their own evidence-backed insights without erasing
 those episodes. Original episodes and repeated chores remain in long-term memory alongside
 those summaries. The painting is graded by hour and map markers show the supplies and repairs.
 
@@ -216,6 +229,16 @@ See the [technical contract](docs/technical-spec.md) and
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+Node, when available, runs the viewer's focused JavaScript checks from the same
+suite. Optional Chromium checks live in `tests/viewer_browser.mjs`; use an
+existing `playwright-core` installation and a disposable local village started
+with `--visitors`. Set `PLAYWRIGHT_MODULE` to its module path,
+`CHROMIUM_PATH` to the browser executable, `VILLAGE_SIM_URL` to the local
+session, and `VILLAGE_SIM_OPERATOR_TOKEN` to that session's token. The script
+pauses the village, registers a test visitor, checks desktop and phone layouts,
+then leaves and restores playback. Screenshots go to a temporary directory
+or `ARTIFACT_DIR`.
 
 Tests cover daily goals and friendships, a full unattended day, map connectivity, deterministic execution,
 session memory beyond 100 steps, provider changes, external action validation,

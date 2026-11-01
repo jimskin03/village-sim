@@ -212,7 +212,7 @@
     button.setAttribute("aria-pressed", enabled ? "true" : "false");
     button.title = label;
     button.setAttribute("aria-label", label);
-    button.innerHTML = `<svg aria-hidden="true"><use href="#i-${enabled ? "sound" : "muted"}"/></svg>`;
+    button.innerHTML = `<svg aria-hidden="true"><use href="#i-${enabled ? "sound" : "muted"}"/></svg><span>Sound ${enabled ? "on" : "off"}</span>`;
   }
 
   function silence() {

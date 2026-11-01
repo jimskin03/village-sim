@@ -476,10 +476,24 @@ class VisitorServerTests(unittest.TestCase):
         self.assertEqual(self.call("/api/control", {"action": "pause"}, operator="operator-test-token-123")[0], 200)
         self.assertNotIn("operator-test-token-123", json.dumps(self.call("/api/state")[1]))
 
+    def test_operator_capability_check_is_read_only_and_keeps_host_rules(self):
+        self.enable()
+        before = self.call("/api/state")[1]
+        self.assertEqual(self.call("/api/operator")[0], 401)
+        self.assertEqual(self.call("/api/operator", operator="invalid-token")[0], 401)
+        self.assertEqual(self.call("/api/operator", operator="operator-test-token-123"),
+                         (200, {"operator": True}))
+        for headers in ({"Origin": "https://outside.example"}, {"Host": "village.example"}):
+            status, body = self.call("/api/operator", operator="operator-test-token-123", headers=headers)
+            self.assertEqual(status, 403)
+            self.assertFalse(body["operator"])
+        self.assertEqual(self.call("/api/state")[1], before)
+
     def test_local_runs_without_token_until_visitors_are_enabled(self):
         self.tearDown()
         self.start()
         self.assertFalse(self.session.operator_required)
+        self.assertEqual(self.call("/api/operator"), (200, {"operator": True}))
         self.assertEqual(self.call("/api/control", {"action": "pause"})[0], 200)
         self.assertEqual(self.call("/api/visitors/control", {"action": "enable"})[0], 200)
         self.assertTrue(self.session.operator_required)
