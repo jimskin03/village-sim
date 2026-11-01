@@ -39,8 +39,8 @@ def meeting(sim, partner, *, kept=False, present=None):
         sim.agents[aid].x, sim.agents[aid].y = shore if aid in present else away
     chat.attend(sim)
     expected = [aid for aid in people if aid in present]
-    if commitment["attended"] != expected:
-        raise AssertionError(f"attendance was {commitment['attended']}")
+    if commitment["attended"] != expected or commitment["together"] != (expected == people):
+        raise AssertionError(f"attendance was {commitment['attended']}, together={commitment['together']}")
     sim.step = (start + 30 - origin) // interval
     chat.update(sim)
     return commitment
@@ -149,6 +149,63 @@ class ReflectionTests(unittest.TestCase):
         self.assertEqual(quiet["attended"], [])
         self.assertEqual(neither.agents["mara"].trust, {})
         self.assertEqual(neither.agents["tom"].trust, {})
+
+    def test_staggered_arrivals_do_not_count_as_meeting(self):
+        sim = Simulation(2, cognition_mode="hybrid")
+        sim.step = 48
+        shore, away = sim.world.point("shore"), sim.world.point("fire")
+        for aid in ("mara", "tom"):
+            sim.agents[aid].x, sim.agents[aid].y = shore
+        start = sim.total_minutes + 30
+        sim.conversations.append({
+            "id": 1, "participants": ["mara", "tom"], "topic": "Plan the boats",
+            "status": "active", "created_step": sim.step, "transcript": [], "offer": None,
+            "offered_by": None, "reason": None,
+        })
+        offer = {"participants": ["mara", "tom"], "place": "shore", "task": "repair_boat",
+                 "start_minute": start, "duration_minutes": 30}
+        for aid, move in (("mara", "propose"), ("tom", "accept")):
+            context = chat.context(sim, aid)
+            chat.apply_turn(sim, aid, {
+                "contract": chat.CONTRACT, "conversation_id": context["conversation_id"],
+                "turn": context["turn"], "move": move, "terms": offer,
+                "speech": "Let us meet at the shore.",
+            })
+        commitment = sim.commitments[-1]
+        origin = sim.world.config["start_minute"]
+        interval = sim.world.config["minutes_per_step"]
+        sim.step = (start - origin) // interval
+        sim.agents["mara"].x, sim.agents["mara"].y = shore
+        sim.agents["tom"].x, sim.agents["tom"].y = away
+        chat.attend(sim)
+        sim.step += 1
+        sim.agents["mara"].x, sim.agents["mara"].y = away
+        sim.agents["tom"].x, sim.agents["tom"].y = shore
+        chat.attend(sim)
+        self.assertEqual(commitment["attended"], ["mara", "tom"])
+        self.assertFalse(commitment["together"])
+        sim.step += 1
+        chat.update(sim)
+        self.assertEqual(commitment["status"], "missed")
+        self.assertEqual(sim.agents["mara"].trust, {})
+        self.assertEqual(sim.agents["tom"].trust, {})
+
+        met = Simulation(2, cognition_mode="hybrid")
+        met.step = 48
+        kept = meeting(met, "tom", kept=True)
+        self.assertTrue(kept["together"])
+        self.assertEqual(kept["status"], "completed")
+        self.assertEqual(round(met.agents["mara"].trust["tom"] * 10), 1)
+        self.assertEqual(round(met.agents["tom"].trust["mara"] * 10), 1)
+
+        saved = export_session(met)
+        saved["schema_version"] = 5
+        saved["state"]["commitments"][0].pop("together")
+        original = copy.deepcopy(saved)
+        restored = restore_session(saved)
+        self.assertEqual(saved, original)
+        self.assertEqual(restored.commitments[0]["together"], True)
+        self.assertEqual(export_session(restored)["schema_version"], 6)
 
     def test_newer_broken_promise_retires_a_helper_insight(self):
         sim = Simulation(6, cognition_mode="hybrid")

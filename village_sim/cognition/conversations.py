@@ -169,7 +169,8 @@ def apply_turn(sim, aid, data):
         conversation.update(offer=terms, offered_by=aid)
     elif move == "accept":
         commitment = {"id": len(sim.commitments) + 1, "conversation_id": conversation["id"],
-                      "terms": copy.deepcopy(terms), "status": "scheduled", "attended": [], "reason": None}
+                      "terms": copy.deepcopy(terms), "status": "scheduled", "attended": [],
+                      "together": False, "reason": None}
         sim.commitments.append(commitment)
         names = " and ".join(sim.residents[p].name for p in terms["participants"])
         fact = f"{names} agreed to {terms['task'].replace('_', ' ')} at {terms['place']} at minute {terms['start_minute']} for {terms['duration_minutes']} minutes."
@@ -275,8 +276,7 @@ def update(sim, *, advance=True):
                 or any(aid not in sim.agents for aid in people)):
             conclude(sim, commitment, "cancelled", "participants unavailable")
         elif sim.total_minutes >= terms["start_minute"] + terms["duration_minutes"]:
-            showed = [person for person in people if person in commitment["attended"]]
-            conclude(sim, commitment, "completed" if showed == people else "missed", "meeting time ended")
+            conclude(sim, commitment, "completed" if commitment["together"] else "missed", "meeting time ended")
 
 
 def conclude(sim, commitment, status, reason):
@@ -318,10 +318,12 @@ def attend(sim):
                    if aid in sim.agents and (sim.agents[aid].x, sim.agents[aid].y) == place]
         before = [aid for aid in people if aid in commitment["attended"]]
         commitment["attended"] = [aid for aid in people if aid in before or aid in present]
-        if commitment["attended"] == people and before != people:
+        overlapped = all(aid in present for aid in people)
+        if overlapped and not commitment["together"]:
+            commitment["together"] = True
             sim.event(f"Both villagers attended their meeting to {terms['task'].replace('_', ' ')} at {terms['place']}.",
                       "commitment", people, task=terms["task"])
-        else:
+        elif not commitment["together"]:
             for aid in commitment["attended"]:
                 if aid in before:
                     continue
@@ -331,7 +333,7 @@ def attend(sim):
                     f"{terms['task'].replace('_', ' ')}; {sim.residents[other].name} was not there.",
                     "commitment", [aid], task=terms["task"],
                 )
-        if all(aid in present for aid in people):
+        if overlapped:
             for aid in people:
                 agent = sim.agents[aid]
                 if (agent.role in CRAFTS.get(terms["task"], ()) and sim.step - agent.last_work >= 4
@@ -447,14 +449,17 @@ def validate_state(sim):
     used, scheduled = set(), []
     for identifier, commitment in enumerate(sim.commitments, 1):
         if (not isinstance(commitment, dict)
-                or set(commitment) != {"id", "conversation_id", "terms", "status", "attended", "reason"}
+                or set(commitment) != {"id", "conversation_id", "terms", "status", "attended", "together", "reason"}
                 or type(commitment["id"]) is not int or commitment["id"] != identifier
                 or type(commitment["conversation_id"]) is not int or commitment["conversation_id"] in used
                 or commitment["conversation_id"] not in agreements
                 or commitment["terms"] != agreements[commitment["conversation_id"]]
                 or commitment["status"] not in ("scheduled", "completed", "missed", "cancelled")
+                or type(commitment.get("together")) is not bool
                 or _attendance(commitment) is None
-                or (commitment["status"] == "completed" and commitment["attended"] != commitment["terms"]["participants"])
+                or (commitment["together"] and commitment["attended"] != commitment["terms"]["participants"])
+                or (commitment["status"] == "completed" and not commitment["together"])
+                or (commitment["status"] == "missed" and commitment["together"])
                 or (commitment["reason"] is not None and (not isinstance(commitment["reason"], str) or len(commitment["reason"]) > 200))):
             raise ValueError("Invalid or unaccepted commitment")
         used.add(commitment["conversation_id"])

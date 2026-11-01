@@ -2,9 +2,10 @@
 
 Insights are interpretations. They can cite only memories the resident already
 holds, and they never rewrite biography, episodes, or trust scores. Trust moves
-by one tenth and stays in [-1, 1]. Both people gain trust when both attend. Only
-a person who waited loses trust in someone who did not come. A helper insight
-stands only while newer evidence still supports that person.
+by one tenth and stays in [-1, 1]. Both people gain trust only when they are
+present together. Only a person who waited loses trust in someone who never
+came. Arriving at different times changes nothing. A helper insight stands only
+while newer evidence still supports that person.
 """
 
 from __future__ import annotations
@@ -371,7 +372,9 @@ def adjust_trust(sim, commitment, outcome):
     if status == "completed":
         changes = [(aid, other, 0.1) for aid in people for other in people if other != aid]
     else:
-        # Waiting is the experience of a broken promise. Absence is not.
+        # A person who waited loses trust only in someone who never arrived.
+        # Arriving at different times is a missed meeting, not a shared one,
+        # and it does not invent a grudge between two people who both showed up.
         changes = [(aid, other, -0.1) for aid in attended for other in people
                    if other != aid and other not in attended]
     for aid, other, delta in changes:

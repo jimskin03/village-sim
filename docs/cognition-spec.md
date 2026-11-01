@@ -171,7 +171,8 @@ Automatic calls remain at least ten seconds apart, with thirty-second error
 backoff and thirty-second per-request timeout. Optional embedding and planning
 calls run sequentially in the background. Think bypasses spacing, not validation.
 
-Checkpoint schema 5 adds per-resident trust and reflection cursors. Schema 4
+Checkpoint schema 6 records whether the two people at a meeting were present
+together. Schema 5 adds per-resident trust and reflection cursors. Schema 4
 adds conversations and commitments; schema 3 introduced
 cognition mode and per-resident plans. Schema 3 migrates with empty social history. Schema 2 migrates
 to rules with empty cognitive plans; schema 1 first receives memory metadata.
@@ -232,10 +233,12 @@ same contract through the authenticated action endpoint with the current `step`.
 
 Accepted appointments preempt individual plans when travel becomes due. Participants
 attempt travel using A*, spend the agreed window at the destination, and record
-attendance separately. Work remains world-controlled and runs only while both
-people are present and the matching craft is there. Outcomes are completed,
-missed or cancelled, with memories for both residents. A completed meeting is one
-both people attended. A missed meeting can record that only one person waited. Weather, festivals,
+each arrival separately from time spent together. Work remains world-controlled
+and runs only while both people are present and the matching craft is there.
+Outcomes are completed, missed or cancelled, with memories for both residents.
+A meeting is completed only when both people are present at the same time. Arriving
+at different moments is a missed meeting. A missed meeting can also record that
+only one person waited. Weather, festivals,
 leaving the village or switching to Rules cancel outstanding appointments. Provider
 disconnection preserves already accepted commitments. These appointments are shown
 in the Plan tab alongside the latest transcript; observations expose a resident's
@@ -245,7 +248,9 @@ thirty-two commitments; checkpoints retain all social history.
 Checkpoint validation checks alternating turns, memory references, matching offers
 and acceptance, and rejects unilateral or missing appointments. Schema 1–3 saves
 migrate to schema 4 without manufacturing conversations. Schema 4 saves migrate
-to schema 5 with empty trust. Private knowledge provenance and group gatherings
+to schema 5 with empty trust, and schema 5 saves gain a together flag: it is
+true only when the saved attendance already lists both people. Private knowledge
+provenance and group gatherings
 remain stages 5–6.
 
 ### Personal reflection and trust (stage 4, implemented)
@@ -259,10 +264,11 @@ memories. Invalid evidence is rejected and changes nothing. Accepted insights ar
 private semantic memories linked to their sources. Original episodes stay. The
 shared midnight journal summary remains a separate village record.
 
-Trust is a score from -1 to 1 for each other resident. When both people attend,
-each score toward the other rises by 0.1. When one person waits and the other
-does not come, only the person who waited loses 0.1 trust in the absent person.
-If neither attends, trust stays unchanged. Cancellation does not move trust.
+Trust is a score from -1 to 1 for each other resident. When both people are
+present together, each score toward the other rises by 0.1. When one person
+waits and the other never comes, only the person who waited loses 0.1 trust in
+the absent person. If neither comes, or both come at different times, trust
+stays unchanged. Cancellation does not move trust.
 Scores stay in [-1, 1] and each change is linked to the outcome memory. Models
 may describe what the evidence means, but they cannot rewrite biography,
 episodes, or the score. A helper insight is followed only while that person is

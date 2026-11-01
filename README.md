@@ -40,8 +40,9 @@ that lights after dark. Work produces specific successes or failures. Supper at
 dusk spends the supplies, remembers a shortfall, and shapes tomorrow’s goals.
 Storms damage the net and close the jetty; festivals spend supplies and welcome
 a visitor to the guest cottage. Relationships keep the latest shared promise or
-grudge. In Hybrid mode, a kept meeting raises trust in both directions. A missed
-meeting lowers trust only for the person who waited. A villager who has seen
+grudge. In Hybrid mode, trust rises in both directions only when both people are
+at the meeting at the same time. A missed meeting lowers trust only for the
+person who waited while the other never came. A villager who has seen
 someone break plans will ask a more reliable person for help, and a later broken
 promise can retire that preference. At midnight, a two-sentence village reflection is pinned above the compact chore
 log. Hybrid villagers may add their own evidence-backed insights without erasing
@@ -89,7 +90,7 @@ can surface after hundreds of chores. It works without embeddings or API calls;
 optionally set an **Embedding model** under Connection details to generate
 semantic vectors through the same provider. Results are cached, and embedding
 failures fall back to keyword recall. Existing saves migrate automatically to
-checkpoint version 5 and retain their thinking style (older saves default to Rules). The [cognition specification](docs/cognition-spec.md)
+checkpoint version 6 and retain their thinking style (older saves default to Rules). The [cognition specification](docs/cognition-spec.md)
 describes memory, planning, conversations, and personal reflection. Perception and coordination remain later stages.
 
 Live memory views and replay frames have fixed budgets: the viewer shows up to

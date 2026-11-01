@@ -15,7 +15,7 @@ from .cognition.memory import make_memory, validate_memory
 from .cognition import planning, conversations
 from .simulation import Agent, PERSONAS, Simulation
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
@@ -76,6 +76,8 @@ def _migrate(data):
         raise ValueError("Unsupported session version")
     if data["schema_version"] == SCHEMA_VERSION:
         return data
+    if data["schema_version"] == 5:
+        return _migrate_overlap(copy.deepcopy(data))
     if data["schema_version"] == 4:
         return _migrate_reflection(copy.deepcopy(data))
     if data["schema_version"] == 3:
@@ -128,6 +130,20 @@ def _migrate_reflection(data):
         resident.setdefault("last_reflection_step", -4)
         resident.setdefault("reflection_cursor", 0)
         resident.setdefault("reflection_reason", None)
+    return _migrate_overlap(data)
+
+
+def _migrate_overlap(data):
+    """Separate individual arrival from a meeting both people attended together."""
+    for commitment in data.get("state", {}).get("commitments", []):
+        if not isinstance(commitment, dict) or "together" in commitment:
+            continue
+        terms = commitment.get("terms")
+        people = terms.get("participants") if isinstance(terms, dict) else None
+        attended = commitment.get("attended")
+        commitment["together"] = (
+            isinstance(people, list) and isinstance(attended, list) and attended == people
+        )
     data["schema_version"] = SCHEMA_VERSION
     return data
 

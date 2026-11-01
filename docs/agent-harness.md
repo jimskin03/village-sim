@@ -164,8 +164,8 @@ needs `text` (1–240 characters), `source_ids` from the supplied evidence,
 `participants` who appear in those memories, and `preferred_helper`/`task`
 (`null` unless the insight names one cited participant and a listed task).
 Unsupported or stale evidence is rejected and does not change trust, biography, or memory.
-Trust rises for both people when both attend. It falls only for a person who waited
-while the other did not come.
+Trust rises for both people only when they are present together. It falls only
+for a person who waited while the other never came.
 
 Observation `commitments` contains your resident's accepted appointments. These
 appointments override individual plans when travel is due. Both participants
