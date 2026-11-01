@@ -54,6 +54,20 @@ story to watch it, then choose **Resume this story** to continue its simulation.
 Older recordings without a checkpoint remain replayable. Resuming replaces the
 live village, pauses it, and disconnects model providers; press Play to continue.
 
+Survival is always on: every villager has food, water and health bars. Food and
+water each drain by 0.5 per step (48 per day). Supper provides fish rations (+40)
+and herb bundles (+15); hungry villagers can also eat at the food collection
+center. Anyone can fish, garden or collect water, regardless of their usual craft.
+After their initial daily work, free villagers divide shortages by distance and
+current stock, with water first. Personal hunger and thirst interrupt plans.
+
+The well and rain barrel replenish every step without a cap. Villagers collect
+water into the water collection center and drink one unit for +20 water. The sea
+is never drinkable. Low food or water reduces health; being well fed and watered
+restores it. At zero health a villager collapses for one step, then resumes with
+10 health. Nobody dies or disappears from survival shortages. The
+[survival rules](docs/survival.md) describe rates, collection centers and recovery.
+
 Live sessions save atomically to `.village-sim/session.json` after each step and
 control change. Restarting the server resumes the clock, pantry, memories,
 promises, absent residents and random sequence. Choose `--state-file PATH` for
@@ -90,7 +104,7 @@ can surface after hundreds of chores. It works without embeddings or API calls;
 optionally set an **Embedding model** under Connection details to generate
 semantic vectors through the same provider. Results are cached, and embedding
 failures fall back to keyword recall. Existing saves migrate automatically to
-checkpoint version 6 and retain their thinking style (older saves default to Rules). The [cognition specification](docs/cognition-spec.md)
+checkpoint version 8 and retain their thinking style (older saves default to Rules). The [cognition specification](docs/cognition-spec.md)
 describes memory, planning, conversations, and personal reflection. Perception and coordination remain later stages.
 
 Live memory views and replay frames have fixed budgets: the viewer shows up to
@@ -170,6 +184,7 @@ village-sim --headless
 - `village_sim/cognition/planning.py`: legal choices and validated autonomous plans.
 - `village_sim/cognition/embeddings.py`: optional bounded semantic-recall cache.
 - `village_sim/simulation.py`: clock, personas, memory, relationships, work and events.
+- `village_sim/survival.py`: food, fresh water, shared reserves and collapse/recovery.
 - `village_sim/decisions.py`: replaceable `decide(agent, observation) -> Action`.
 - `village_sim/providers.py`: optional OpenAI-compatible model adapter.
 - `village_sim/recording.py`: disk replay archive and stable export readers.

@@ -13,7 +13,7 @@ from typing import Callable
 
 from .cognition.memory import MemoryStore, memory_view
 from .cognition import planning, conversations, reflection
-from . import visitors
+from . import visitors, survival
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -117,6 +117,10 @@ class Agent:
     last_reflection_step: int = -4
     reflection_cursor: int = 0
     reflection_reason: str | None = None
+    food: float = 100
+    water: float = 100
+    health: float = 100
+    collapsed_until: int = 0
 
 
 class Simulation:
@@ -141,8 +145,9 @@ class Simulation:
         self.pending: dict[str, Action] = {}
         self.events: list[dict] = []
         self.next_event_id = 0
-        self.pantry = {"fish": 0, "herbs": 0, "boat_condition": "sound",
+        self.pantry = {"fish": 0, "herbs": 0, "water": 3 * count, "boat_condition": "sound",
                        "net_condition": "sound", "hearth_lit": True}
+        self.water_sources = survival.initial_sources()
         self.suppers: list[dict] = []
         self.reflections: list[dict] = []
         self.visitor: dict | None = None
@@ -365,6 +370,8 @@ class Simulation:
             "weather": self.weather,
             "festival": self.step < self.festival_until,
             "pantry": dict(self.pantry),
+            **self.survival_view(),
+            "food": agent.food, "water": agent.water, "health": agent.health,
             "last_supper": copy.deepcopy(self.suppers[-1]) if self.suppers else None,
             "agent": self.agent_view(agent),
             "cognition_mode": self.cognition_mode,
@@ -410,6 +417,8 @@ class Simulation:
     def submit(self, aid: str, data: dict):
         if aid not in self.agents:
             raise ValueError("Unknown villager")
+        if survival.collapsed(self.agents[aid]):
+            raise ValueError("This villager is collapsed and cannot act until recovery")
         if type(data.get("step")) is not int or data["step"] != self.step:
             raise ValueError("Decision is stale; fetch a fresh observation")
         if data.get("contract") == conversations.CONTRACT:
@@ -438,6 +447,7 @@ class Simulation:
             return
         place = data.get("place", observation["suggested_action"]["place"])
         activity = data.get("activity", observation["suggested_action"]["activity"])
+        survival.validate_activity(place, activity)
         if (place, activity) != (observation["suggested_action"]["place"], observation["suggested_action"]["activity"]):
             raise ValueError("Choose a current allowed action; the rules set the activity")
         for field in ("result", "mood", "promise", "speech"):
@@ -539,6 +549,7 @@ class Simulation:
         conversations.update(self, advance=False)
 
     def tick(self):
+        centers_before = survival.centers(self)
         previous_day = self.day
         previous_hour = self.minute // 60
         self.step += 1
@@ -561,8 +572,6 @@ class Simulation:
         day_ended = self.day != previous_day
         if day_ended:
             self._reflect(previous_day)
-        if self.minute >= 18 * 60 and not any(s["day"] == self.day for s in self.suppers):
-            self._supper()
         for agent in self.agents.values():
             agent.speech = None
             agent.thought = None
@@ -572,8 +581,13 @@ class Simulation:
                 self._refresh_goals(agent)
             if previous_hour != self.minute // 60 and self.minute // 60 in (0, 6, 10, 13, 15, 18, 21, 23):
                 self.request_replan(agent.id, "schedule_changed")
+        survival.tick(self)
+        if self.minute >= 18 * 60 and not any(s["day"] == self.day for s in self.suppers):
+            self._supper()
         conversations.update(self)
         for agent in self.agents.values():
+            if survival.collapsed(agent):
+                continue
             if conversations.active(self, agent.id):
                 agent.activity = "in conversation"
                 continue
@@ -609,6 +623,11 @@ class Simulation:
                 if planned:
                     self.request_replan(agent.id, "commitment_due")
                 action, planned = meeting, False
+            urgent = survival.personal_action(agent, observation)
+            if urgent and action.activity != urgent.activity:
+                if planned:
+                    self.request_replan(agent.id, "survival_need")
+                action, planned, meeting = urgent, False, None
             if action.mood in observation["mood_options"]:
                 agent.mood = action.mood
             agent.thought = action.thought
@@ -638,7 +657,8 @@ class Simulation:
             productive = not planned or cognitive["steps"][cognitive["index"]]["action"] in ("work", "routine")
             if meeting:
                 productive = False  # Shared work runs after both residents move.
-            if arrived and productive and self.step - agent.last_work >= 4 and self._result_options(agent, action.place):
+            handled = arrived and survival.execute(self, agent, action.place, action.activity)
+            if arrived and not handled and productive and self.step - agent.last_work >= 4 and self._result_options(agent, action.place):
                 agent.last_work = self.step
                 self._work(agent, action.place, action.result)
             if planned and arrived and cognitive["status"] == "active":
@@ -652,23 +672,33 @@ class Simulation:
                         self.request_replan(agent.id, "plan_completed")
                     else:
                         cognitive["remaining"] = cognitive["steps"][cognitive["index"]]["duration_minutes"] // 15
+            if agent.health < 30:
+                agent.mood = "tired"
         conversations.attend(self)
         self._converse()
         reflection.consider(self, day_end=day_ended)
         reflection.adopt_help_plans(self)
         visitors.tick(self, day_ended=day_ended)
+        for resource, center in survival.centers(self).items():
+            if center["low"] and (day_ended or not centers_before[resource]["low"]):
+                self.event(f"The {resource} collection center is below one day's supply for {len(self.agents)} villagers.",
+                           "survival", self.agents, significant=True)
         return self.snapshot()
 
     def _result_options(self, agent, place):
+        if survival.collapsed(agent):
+            return []
+        if place == "garden" and agent.food <= 40:
+            return ["first_basil", "mint_bundle", "wilted_seedlings"]
         if self.weather == "storm" or self.step < self.festival_until or not (6 <= self.minute // 60 < 18):
             return []
-        if place == "nets" and agent.role in ("fisher", "boatwright"):
+        if place == "nets":
             return ["mended_mesh", "knotted_rope"]
-        if agent.role == "fisher" and place in ("jetty", "shore"):
+        if place == "jetty" or (agent.role == "fisher" and place == "shore"):
             if self.pantry["net_condition"] == "torn":
                 return ["torn_mesh"]
             return ["silver_fish", "mackerel", "empty_net", "torn_mesh"]
-        if agent.role == "gardener" and place == "garden":
+        if place == "garden":
             return ["first_basil", "mint_bundle", "wilted_seedlings"]
         if agent.role == "boatwright" and place == "shore":
             return ["sealed_hull", "sound_boat", "leaking_boat"]
@@ -676,6 +706,8 @@ class Simulation:
 
     def _work(self, agent, place, requested=None):
         options = self._result_options(agent, place)
+        if not options:
+            return
         # Useful work is common; failures still have material consequences.
         result = requested if requested in options else self.rng.choice(options[:2] * 3 + options[2:])
         detail, success = {
@@ -710,6 +742,7 @@ class Simulation:
         text = f"{agent.name} {detail}."
         agent.thought = agent.thought or text
         self.event(text, "work", [agent.id], place=place,
+                   collection_center=survival.FOOD_CENTER if result in ("silver_fish", "mackerel", "first_basil", "mint_bundle") else None,
                    significant=result in ("torn_mesh", "leaking_boat", "wilted_seedlings"))
         key = f"{self.day}:{agent.id}:{place}"
         summary = self.daily_work.setdefault(key, {"day": self.day, "agent": agent.id, "place": place, "results": {}})
@@ -718,10 +751,15 @@ class Simulation:
             self._progress_goal(agent, "work", place=place)
 
     def _supper(self):
+        diners = sorted((a for a in self.agents.values() if not survival.collapsed(a)), key=lambda a: (a.food, a.id))
         need_fish, need_herbs = len(self.agents), max(1, (len(self.agents) + 2) // 3)
-        fish, herbs = min(need_fish, self.pantry["fish"]), min(need_herbs, self.pantry["herbs"])
+        fish, herbs = min(len(diners), self.pantry["fish"]), min(need_herbs, len(diners), self.pantry["herbs"])
         self.pantry["fish"] -= fish
         self.pantry["herbs"] -= herbs
+        for agent in diners[:fish]:
+            agent.food = survival.clamp(agent.food + survival.FISH_FOOD)
+        for agent in sorted(diners, key=lambda a: (a.food, a.id))[:herbs]:
+            agent.food = survival.clamp(agent.food + survival.HERB_FOOD)
         missing = {"fish": need_fish - fish, "herbs": need_herbs - herbs}
         empty = []
         for agent in self.agents.values():
@@ -773,10 +811,12 @@ class Simulation:
             self.event(text, "work_summary", [agent.id], source_ids=sources)
 
     def _speech_options(self, agent):
+        if survival.collapsed(agent):
+            return []
         hour = self.minute // 60
         if hour < 6 or hour >= 23:
             return []
-        facts = [m for m in agent.memory[-8:] if m["kind"] in ("work", "supper", "weather", "festival", "reflection")]
+        facts = [m for m in agent.memory[-8:] if m["kind"] in ("work", "supper", "weather", "festival", "reflection", "survival", "collapse", "recovery")]
         if not facts:
             return []
         fact = facts[-1]["text"]
@@ -818,6 +858,8 @@ class Simulation:
             return -sum(goal["id"] == "social" and not goal["completed"] and goal["partner"] == partner.id
                         for agent, partner in (pair, pair[::-1]) for goal in agent.goals)
         for first, other in sorted(pairs, key=priority):
+            if survival.collapsed(first) or survival.collapsed(other):
+                continue
             if min(self.step - first.last_chat, self.step - other.last_chat) < 8:
                 continue
             if "sleeping" in (first.activity, other.activity):
@@ -847,6 +889,24 @@ class Simulation:
             self._progress_goal(first, "social", partner=other.id)
             self._progress_goal(other, "social", partner=first.id)
 
+    def survival_observation(self):
+        return {"step": self.step, "pantry": self.pantry, "water_sources": self.water_sources,
+                "places": self.world.config["places"]}
+
+    def survival_view(self):
+        return {
+            "villager_count": len(self.agents),
+            "collection_centers": survival.centers(self),
+            "water_sources": copy.deepcopy(self.water_sources),
+            "present_villagers": [
+                {"id": a.id, "name": a.name, "x": a.x, "y": a.y,
+                 "food": a.food, "water": a.water, "health": a.health,
+                 "collapsed": survival.collapsed(a),
+                 "busy": bool(conversations.active(self, a.id) or conversations.meeting_action(self, a.id)),
+                 "work_completed": any(g["id"] == "work" and g["completed"] for g in a.goals)}
+                for a in self.agents.values()],
+        }
+
     def snapshot(self):
         return {
             "schema_version": 1,
@@ -860,6 +920,7 @@ class Simulation:
             "weather": self.weather,
             "festival": self.step < self.festival_until,
             "pantry": dict(self.pantry),
+            **self.survival_view(),
             "suppers": copy.deepcopy(self.suppers[-7:]),
             "reflections": copy.deepcopy(self.reflections[-7:]),
             "visitor": copy.deepcopy(self.visitor),

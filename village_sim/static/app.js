@@ -239,6 +239,20 @@ function renderStateMarkers() {
     { place: "fire", icon: pantry.hearth_lit ? "♨" : "○", text: pantry.hearth_lit ? "Hearth lit" : "Hearth resting",
       note: "The hearth is lit after dark" },
   ];
+  if (state.collection_centers) {
+    const centers = state.collection_centers;
+    markers.push(
+      { place: "food_center", icon: "▤", text: `Food · ${pantry.fish} fish · ${pantry.herbs} herbs`,
+        short: centers.food.low, note: `${centers.food.level} food points; daily need ${centers.food.daily_need} for ${need} villagers` },
+      { place: "water_center", icon: "◉", text: `Water · ${pantry.water} units`,
+        short: centers.water.low, note: `Daily need ${centers.water.daily_need} water units for ${need} villagers` },
+    );
+    for (const [id, source] of Object.entries(state.water_sources || {})) {
+      markers.push({ place: id, icon: "◉", text: `${id === "well" ? "Well" : "Rain barrel"} · ${source.supply}`,
+        short: source.fouled_until > state.step,
+        note: source.fouled_until > state.step ? "Temporarily fouled; fresh water returns soon" : "Fresh water replenishes every step" });
+    }
+  }
   if (state.visitor) markers.push({ place: "guest_home", icon: "✧",
     text: `${state.visitor.name || "Festival guest"} · visiting`, note: "A festival visitor is staying at the guest cottage" });
   container.innerHTML = markers.map((marker) => {
@@ -267,7 +281,7 @@ function renderSprites() {
       el.addEventListener("click", () => selectAgent(a.id));
       container.append(el);
     }
-    el.className = `sprite${a.id === selected ? " selected" : ""}${a.activity.startsWith("walking") ? " walking" : ""}`;
+    el.className = `sprite${a.id === selected ? " selected" : ""}${a.activity.startsWith("walking") ? " walking" : ""}${a.collapsed_until ? " collapsed" : ""}`;
     el.style.left = `${(((a.x + 0.5) * 32) / 1280) * 100}%`;
     el.style.top = `${(((a.y + 0.5) * 32) / 720) * 100}%`;
     el.style.setProperty("--agent-color", color(a.color));
@@ -355,6 +369,13 @@ async function visitorControl(action, extra = {}) {
 }
 document.querySelectorAll("[data-visitor-action]").forEach((button) =>
   button.addEventListener("click", () => visitorControl(button.dataset.visitorAction)));
+function survivalBars(agent) {
+  if (![agent.food, agent.water, agent.health].every(Number.isFinite)) return "";
+  return `<span class="survival-bars">${["food", "water", "health"].map((stat) => {
+    const value = Math.max(0, Math.min(100, agent[stat]));
+    return `<span class="survival-stat${value < 25 ? " low" : ""}"><span>${stat} ${Math.round(value)}</span><meter min="0" max="100" low="25" high="60" optimum="100" value="${value}" aria-label="${stat}">${Math.round(value)} / 100</meter></span>`;
+  }).join("")}</span>`;
+}
 function renderCards() {
   const cards = $("#resident-cards");
   const focusedAgent = cards.contains(document.activeElement)
@@ -363,7 +384,7 @@ function renderCards() {
   cards.innerHTML = state.agents
     .map(
       (a) =>
-        `<button class="resident-card${a.id === selected ? " selected" : ""}" data-agent="${esc(a.id)}" aria-pressed="${a.id === selected}">${portrait(a)}<span class="resident-info"><span class="resident-name">${esc(a.name)}${a.provider ? '<i class="provider-dot" title="External provider attached"></i>' : ""}</span><span class="resident-role">${esc(a.role)}</span><span class="resident-activity">${esc(a.activity)}</span></span><span class="resident-arrow" aria-hidden="true">›</span></button>`,
+        `<button class="resident-card${a.id === selected ? " selected" : ""}" data-agent="${esc(a.id)}" aria-pressed="${a.id === selected}">${portrait(a)}<span class="resident-info"><span class="resident-name">${esc(a.name)}${a.provider ? '<i class="provider-dot" title="External provider attached"></i>' : ""}</span><span class="resident-role">${esc(a.role)}</span><span class="resident-activity">${esc(a.activity)}</span>${survivalBars(a)}</span><span class="resident-arrow" aria-hidden="true">›</span></button>`,
     )
     .join("");
   $("#resident-cards")
@@ -445,7 +466,7 @@ function renderDetails() {
   if (tab === "story") {
     const destination =
       world?.places.find((p) => p.id === a.destination)?.name || a.destination;
-    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}${a.mood ? ` · ${esc(a.mood)}` : ""}</p>${a.thought ? `<p class="agent-thought">${esc(a.thought)}</p>` : ""}<p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory_count ?? a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
+    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}${a.mood ? ` · ${esc(a.mood)}` : ""}</p>${a.thought ? `<p class="agent-thought">${esc(a.thought)}</p>` : ""}<p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${survivalBars(a)}${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory_count ?? a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
     detail.querySelectorAll("[data-friend]").forEach((button) =>
       button.addEventListener("click", () => selectAgent(button.dataset.friend)),
     );
@@ -855,7 +876,7 @@ function validCognitivePlan(plan) {
     Array.isArray(plan.steps) && plan.steps.length > 0 && plan.steps.length <= 8 &&
     Number.isInteger(plan.index) && plan.index >= 0 && plan.index <= plan.steps.length &&
     plan.steps.every((step) => step &&
-      ["work", "visit", "rest", "routine"].includes(step.action) &&
+      ["work", "visit", "rest", "routine", "drink", "eat", "collect_water"].includes(step.action) &&
       typeof step.location === "string" && typeof step.reason === "string" &&
       Number.isInteger(step.duration_minutes) && step.duration_minutes >= 15 &&
       step.duration_minutes <= 180 && step.duration_minutes % 15 === 0)
@@ -881,8 +902,27 @@ function validRecording(data) {
     return false;
   return true;
 }
+function validSurvival(s) {
+  if (s.villager_count !== undefined && s.villager_count !== s.agents?.length) return false;
+  if (s.water_sources !== undefined && (!s.water_sources ||
+      !Object.values(s.water_sources).every((source) => source &&
+        Number.isInteger(source.supply) && source.supply >= 0 &&
+        Number.isInteger(source.fouled_until) && source.fouled_until >= 0))) return false;
+  if (s.collection_centers !== undefined && (!s.collection_centers ||
+      !["food", "water"].every((key) => {
+        const center = s.collection_centers[key];
+        return center && typeof center.place === "string" &&
+          Number.isFinite(center.level) && center.level >= 0 &&
+          Number.isFinite(center.daily_need) && center.daily_need > 0 && typeof center.low === "boolean";
+      }))) return false;
+  return Array.isArray(s.agents) && s.agents.every((agent) =>
+    ["food", "water", "health"].every((key) => agent[key] === undefined ||
+      (Number.isFinite(agent[key]) && agent[key] >= 0 && agent[key] <= 100)) &&
+    (agent.collapsed_until === undefined || (Number.isInteger(agent.collapsed_until) && agent.collapsed_until >= 0)));
+}
 function validSnapshot(s) {
   return (
+      validSurvival(s) &&
       Number.isInteger(s.step) &&
       Number.isInteger(s.day) &&
       Number.isFinite(s.minute) &&

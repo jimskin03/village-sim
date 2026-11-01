@@ -31,6 +31,12 @@ full persona, daily goals, relationships and a bounded memory view, nearby agent
 villager summaries, the pantry, relevant memories, available named places, and a
 `suggested_action` from the rule-based brain. Goals expose their title, target,
 progress and completion state so a harness can help the villager pursue them.
+Survival is always on. Observations expose `food`, `water`, `health`,
+`villager_count`, `present_villagers` (including the observer), `water_sources`
+and `collection_centers`. The centers include their current levels, daily need
+and `low` flag. These thresholds update with the present population. All crafts
+can fish, garden and collect water; coordinate using the shared roster and
+levels. See [survival rules](survival.md).
 Use this context with
 any model you choose, then submit the action **with the observed step**:
 
@@ -91,6 +97,12 @@ and may continue without a provider; absent a valid plan, rules continue.
 Model context contains up to twelve relevant and twelve recent memories. Public
 resident views show up to 64 recent memories and total `memory_count`; querying
 can recall older experiences from the complete checkpoint archive.
+
+Hybrid legal entries also include `drink`, `eat` and `collect_water`. Copy their
+locations from `allowed_actions`; seawater is rejected. Personal hunger and
+thirst interrupt a plan to meet immediate needs. A resident with a nonzero
+`collapsed_until` cannot accept actions and has no legal plan entries until
+recovery on the next step.
 
 An accepted action returns `{"accepted":true,"for_step":1}` and is applied on the
 next tick if its context still applies. Only one pending action exists per

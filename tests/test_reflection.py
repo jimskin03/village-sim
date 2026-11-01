@@ -4,7 +4,7 @@ import unittest
 
 from village_sim.cognition import conversations as chat
 from village_sim.cognition import reflection
-from village_sim.persistence import export_session, restore_session
+from village_sim.persistence import SCHEMA_VERSION, export_session, restore_session
 from village_sim.simulation import Simulation
 
 
@@ -205,7 +205,7 @@ class ReflectionTests(unittest.TestCase):
         restored = restore_session(saved)
         self.assertEqual(saved, original)
         self.assertEqual(restored.commitments[0]["together"], True)
-        self.assertEqual(export_session(restored)["schema_version"], 7)
+        self.assertEqual(export_session(restored)["schema_version"], SCHEMA_VERSION)
 
     def test_newer_broken_promise_retires_a_helper_insight(self):
         sim = Simulation(6, cognition_mode="hybrid")

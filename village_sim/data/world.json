@@ -94,6 +94,10 @@
       "x": 17,
       "y": 14,
       "kind": "social"
-    }
+    },
+    { "id": "food_center", "name": "Food collection center", "x": 12, "y": 15, "kind": "food" },
+    { "id": "water_center", "name": "Water collection center", "x": 14, "y": 18, "kind": "water" },
+    { "id": "well", "name": "Freshwater well", "x": 19, "y": 11, "kind": "water" },
+    { "id": "rain_barrel", "name": "Rain barrel", "x": 8, "y": 12, "kind": "water" }
   ]
 }

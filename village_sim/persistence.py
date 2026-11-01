@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, fields
 import copy
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -14,9 +15,10 @@ from .decisions import Action
 from .cognition.memory import make_memory, validate_memory
 from .cognition import planning, conversations
 from .simulation import Agent, PERSONAS, Simulation
-from . import visitors
+from .world import World
+from . import visitors, survival
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
@@ -56,6 +58,8 @@ def _events(items):
 def _json_tree(value):
     if value is None or type(value) in (bool, int, str):
         return True
+    if type(value) is float:
+        return math.isfinite(value)
     if isinstance(value, list):
         return all(_json_tree(item) for item in value)
     if isinstance(value, dict):
@@ -77,6 +81,8 @@ def _migrate(data):
         raise ValueError("Unsupported session version")
     if data["schema_version"] == SCHEMA_VERSION:
         return data
+    if data["schema_version"] == 7:
+        return _migrate_survival(copy.deepcopy(data))
     if data["schema_version"] == 6:
         return _migrate_visitors(copy.deepcopy(data))
     if data["schema_version"] == 5:
@@ -153,6 +159,23 @@ def _migrate_overlap(data):
 def _migrate_visitors(data):
     """Version 7 adds visiting agents; older villages simply have none yet."""
     data.setdefault("state", {}).setdefault("visiting", visitors.initial_state())
+    return _migrate_survival(data)
+
+
+def _migrate_survival(data):
+    """Add survival and collection places, preserving the legacy map otherwise."""
+    world = World()
+    old_world = copy.deepcopy(world.config)
+    added = {survival.FOOD_CENTER, survival.WATER_CENTER, *survival.SOURCES}
+    old_world["places"] = [p for p in old_world["places"] if p["id"] not in added]
+    if data.get("world") == old_world:
+        data["world"] = copy.deepcopy(world.config)
+    state = data["state"]
+    state["pantry"].setdefault("water", 3 * len(data["active_agents"]))
+    state.setdefault("water_sources", survival.initial_sources())
+    for resident in data["residents"].values():
+        for name, value in (("food", 100), ("water", 100), ("health", 100), ("collapsed_until", 0)):
+            resident.setdefault(name, value)
     data["schema_version"] = SCHEMA_VERSION
     return data
 
@@ -175,7 +198,7 @@ def _validate_plan(record, state, world, personas):
         raise ValueError("Invalid plan history")
     actions = []
     for step in plan.get("steps", []):
-        if not isinstance(step, dict) or step.get("action") not in ("work", "visit", "rest", "routine"):
+        if not isinstance(step, dict) or step.get("action") not in ("work", "visit", "rest", "routine", "drink", "eat", "collect_water"):
             raise ValueError("Invalid saved action")
         if step.get("location") not in world.places:
             raise ValueError("Invalid saved location")
@@ -184,11 +207,10 @@ def _validate_plan(record, state, world, personas):
                 raise ValueError("Invalid visit target")
         elif step.get("target") is not None:
             raise ValueError("Invalid action target")
-        if step["action"] == "work" and step["location"] not in {
-            "fisher": ("jetty", "shore", "nets"), "gardener": ("garden",),
-            "boatwright": ("shore", "nets"),
-        }[record["role"]]:
+        if step["action"] == "work" and step["location"] not in ("jetty", "garden", "nets", "shore"):
             raise ValueError("Work does not match the resident's craft")
+        if step["action"] in ("drink", "eat", "collect_water"):
+            survival.validate_activity(step["location"], step["action"].replace("_", " "))
         if step["action"] == "rest" and step["location"] not in (record["home"], "bench", "fire"):
             raise ValueError("Invalid rest location")
         actions.append(step)
@@ -241,6 +263,12 @@ def _restore(data):
                 raise ValueError("Invalid pantry count")
         if pantry["boat_condition"] not in ("sound", "leaking") or pantry["net_condition"] not in ("sound", "torn"):
             raise ValueError("Invalid condition")
+    sources = state["water_sources"]
+    if set(sources) != set(survival.SOURCES) or any(
+            not isinstance(source, dict) or set(source) != {"supply", "fouled_until"}
+            or not all(_integer(source[key]) for key in ("supply", "fouled_until"))
+            for source in sources.values()):
+        raise ValueError("Invalid freshwater sources")
     if "reflections" in state and not _events(state["reflections"]):
         raise ValueError("Invalid reflections")
     if "next_event_id" in state and not _integer(state["next_event_id"]):
@@ -358,6 +386,12 @@ def _restore(data):
                 raise ValueError("Invalid expression")
         if "mood" in record and record["mood"] not in ("content", "hopeful", "worried", "tired"):
             raise ValueError("Invalid mood")
+        for key in ("food", "water", "health"):
+            if type(record[key]) not in (int, float) or not 0 <= record[key] <= 100:
+                raise ValueError("Invalid survival stat")
+        until = record["collapsed_until"]
+        if not _integer(until) or (until and (until > state["step"] + 1 or record["health"] != 0)):
+            raise ValueError("Invalid collapse state")
         for key in ("last_chat", "last_work", "work_count"):
             if not _integer(record[key], -100 if key.startswith("last_") else 0):
                 raise ValueError("Invalid work state")

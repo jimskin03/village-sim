@@ -11,18 +11,28 @@ MODES = ("rules", "hybrid")
 
 
 def legal_actions(agent, observation: dict) -> list[dict]:
+    from .. import survival
     suggested = observation["suggested_action"]
     routine = {"action": "routine", "location": suggested["place"], "target": None,
                "place": suggested["place"], "activity": suggested["activity"]}
+    if survival.collapsed(agent):
+        return []
+    actions = [routine]
+    for kind, places in (("drink", survival.DRINK_PLACES),
+                         ("eat", (survival.FOOD_CENTER, "fire")),
+                         ("collect_water", survival.SOURCES)):
+        for place in places:
+            actions.append({"action": kind, "location": place, "target": None,
+                            "place": place, "activity": "collect water" if kind == "collect_water" else kind})
     if (observation["weather"] == "storm" or observation["festival"]
             or observation["minute"] // 60 < 6 or observation["minute"] // 60 >= 23):
-        return [routine]
-    actions = [routine]
+        return actions
     work = {
         "fisher": [("jetty", "fishing"), ("shore", "fishing"), ("nets", "mending nets")],
         "gardener": [("garden", "tending the garden")],
         "boatwright": [("shore", "checking the boats"), ("nets", "repairing tackle")],
     }[agent.role]
+    work = list(dict.fromkeys([*work, ("jetty", "fishing"), ("garden", "tending the garden"), ("nets", "mending nets")]))
     if 6 <= observation["minute"] // 60 < 18:
         for place, activity in work:
             actions.append({"action": "work", "location": place, "target": None,
@@ -47,6 +57,7 @@ def match_step(step: dict, actions: list[dict]) -> dict:
 
 def validate_proposal(proposal: dict, observation: dict) -> dict:
     """Normalize only explicit plan-v1 proposals; no legacy voice gains authority."""
+    from .. import survival
     if not isinstance(proposal, dict) or proposal.get("contract") != CONTRACT:
         raise ValueError("Hybrid planning requires the plan-v1 contract")
     goal, steps, evidence = proposal.get("goal"), proposal.get("steps"), proposal.get("memory_ids", [])
@@ -62,6 +73,8 @@ def validate_proposal(proposal: dict, observation: dict) -> dict:
         raise ValueError("Plan evidence must identify memories in the observation")
     normalized = []
     for step in steps:
+        if isinstance(step, dict) and step.get("action") in ("drink", "eat", "collect_water"):
+            survival.validate_activity(step.get("location"), step["action"].replace("_", " "))
         action = match_step(step, observation["allowed_actions"])
         duration, reason = step.get("duration_minutes"), step.get("reason", "")
         if type(duration) is not int or not 15 <= duration <= 180 or duration % 15:

@@ -4,6 +4,7 @@ import copy
 import math
 
 from ..decisions import Action
+from .. import survival
 from .memory import memory_view
 
 CONTRACT = "conversation-v1"
@@ -15,7 +16,8 @@ TASKS = {
     "fish": ("jetty", "shore"),
 }
 CRAFTS = {"repair_nets": ("fisher", "boatwright"), "repair_boat": ("boatwright",),
-          "gather_herbs": ("gardener",), "fish": ("fisher",)}
+          "gather_herbs": ("fisher", "gardener", "boatwright"),
+          "fish": ("fisher", "gardener", "boatwright")}
 
 
 def active(sim, aid):
@@ -92,6 +94,8 @@ def context(sim, aid):
         "contract": CONTRACT, "conversation_id": conversation["id"],
         "turn": len(conversation["transcript"]), "step": sim.step, "now": sim.total_minutes,
         "speaker": aid, "persona": agent.persona, "goals": copy.deepcopy(agent.goals),
+        "food": agent.food, "water": agent.water, "health": agent.health,
+        "villager_count": len(sim.agents), "collection_centers": survival.centers(sim),
         "daily_plan": copy.deepcopy(agent.plan),
         "commitments": [copy.deepcopy(c) for c in sim.commitments
                         if c["status"] == "scheduled" and aid in c["terms"]["participants"]],
@@ -146,6 +150,8 @@ def available(sim, conversation):
     if any(aid not in sim.agents for aid in people) or not 6 <= sim.minute // 60 < 23:
         return False
     first, other = (sim.agents[aid] for aid in people)
+    if any(survival.collapsed(a) or survival.personal_action(a, sim.survival_observation()) for a in (first, other)):
+        return False
     return abs(first.x - other.x) + abs(first.y - other.y) <= 2
 
 
@@ -293,6 +299,8 @@ def conclude(sim, commitment, status, reason):
 
 
 def meeting_action(sim, aid):
+    if aid in sim.agents and survival.collapsed(sim.agents[aid]):
+        return None
     for commitment in sim.commitments:
         terms = commitment["terms"]
         if commitment["status"] != "scheduled" or aid not in terms["participants"] or aid not in sim.agents:
@@ -315,7 +323,8 @@ def attend(sim):
             continue
         place = sim.world.point(terms["place"])
         present = [aid for aid in people
-                   if aid in sim.agents and (sim.agents[aid].x, sim.agents[aid].y) == place]
+                   if aid in sim.agents and not sim.agents[aid].collapsed_until
+                   and (sim.agents[aid].x, sim.agents[aid].y) == place]
         before = [aid for aid in people if aid in commitment["attended"]]
         commitment["attended"] = [aid for aid in people if aid in before or aid in present]
         overlapped = all(aid in present for aid in people)
@@ -348,6 +357,8 @@ def start_nearby(sim):
     villagers = list(sim.agents.values())
     for index, first in enumerate(villagers):
         for other in villagers[index + 1:]:
+            if any(survival.collapsed(a) or survival.personal_action(a, sim.survival_observation()) for a in (first, other)):
+                continue
             people = [first.id, other.id]
             if any(active(sim, aid) or meeting_action(sim, aid) for aid in people):
                 continue

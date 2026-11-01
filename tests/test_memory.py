@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from village_sim.cognition.memory import MemoryStore, make_memory
-from village_sim.persistence import export_session, restore_session
+from village_sim.persistence import SCHEMA_VERSION, export_session, restore_session
 from village_sim.server import Session
 from village_sim.simulation import Simulation
 
@@ -172,7 +172,7 @@ class MemoryIntegrationTests(unittest.TestCase):
         before = copy.deepcopy(legacy)
         migrated = restore_session(legacy)
         self.assertEqual(legacy, before)
-        self.assertEqual(export_session(migrated)["schema_version"], 7)
+        self.assertEqual(export_session(migrated)["schema_version"], SCHEMA_VERSION)
         self.assertFalse(hasattr(migrated, "seen_texts"))
         for aid, resident in legacy["residents"].items():
             memories = migrated.residents[aid].memory

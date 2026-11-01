@@ -33,6 +33,13 @@ def daily_plan(agent) -> list[dict]:
 
 
 def decide(agent, observation: dict) -> Action:
+    from . import survival
+    if survival.collapsed(agent):
+        return Action(agent.destination, "collapsed")
+    if "collection_centers" in observation:
+        action = survival.suggested_action(agent, observation)
+        if action:
+            return action
     if observation["weather"] == "storm":
         return Action(agent.home, "sheltering from the rain")
     if observation["festival"]:

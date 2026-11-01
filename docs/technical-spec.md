@@ -203,13 +203,16 @@ validated checkpoint. Large stories need sufficient browser memory; the full exp
 is downloaded as a Blob without parsing its frames first. The session-resume HTTP
 body remains limited to 50 MB, independently of replay-file size.
 
-Checkpoint schema 6 includes complete cognitive memories, plans, transcripts,
+Checkpoint schema 8 includes complete cognitive memories, plans, transcripts,
 commitments, whether a meeting was attended together, trust scores, and
-personal-reflection cursors. Schemas 1–5 migrate
+personal-reflection cursors, visitors, survival stats, collapse deadlines,
+freshwater sources and shared water. Schemas 1–7 migrate
 before validation, retaining the saved thinking style (schemas 1–2 default to Rules).
 Stop the server before moving its checkpoint
 and SQLite sidecar together. Archive storage grows with experience.
 Replay/snapshot schema remains 1.
+Survival fields are additive in replay frames; see [survival rules](survival.md)
+for step timing, center thresholds and old-map migration.
 
 ## UI model configuration
 

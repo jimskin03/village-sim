@@ -77,10 +77,15 @@ KINDS = ("move", "speak", "suggest", "spread_rumor", "influence_mood", "nudge_ac
 OPENNESS = {"mara": 0, "tom": 10, "lin": -10, "ada": 5, "ivo": -5, "nell": 5, "ren": 10, "bea": 5}
 THRESHOLDS = {"speak": 30, "suggest": 50, "influence_mood": 50, "nudge_action": 55, "spread_rumor": 60}
 # Where a visitor must stand to touch each part of the shared pantry.
-RESOURCE_PLACES = {"fish": ("jetty", "fire"), "herbs": ("garden", "fire")}
+RESOURCE_PLACES = {"fish": ("jetty", "fire", "food_center"),
+                   "herbs": ("garden", "fire", "food_center"),
+                   "water": ("water_center", "well", "rain_barrel")}
 HELP_TASKS = {"mend_net": "nets", "repair_boat": "shore"}
 SABOTAGE = {"spoil_fish": ("jetty", "fire"), "spoil_herbs": ("garden", "fire"),
-            "fray_net": ("nets",), "hole_boat": ("shore",)}
+            "fray_net": ("nets",), "hole_boat": ("shore",),
+            "foul_barrel": ("rain_barrel",)}
+SABOTAGE["spoil_fish"] += ("food_center",)
+SABOTAGE["spoil_herbs"] += ("food_center",)
 FIELDS = {
     "move": {"place"},
     "speak": {"target", "text"},
@@ -264,6 +269,8 @@ def tick(sim, *, day_ended=False):
 def receptivity(sim, visitor, aid, kind, *, subject=None, tone=None) -> dict:
     """Return the documented score, threshold and verdict for one influence."""
     agent = sim.agents[aid]
+    if agent.collapsed_until:
+        raise ValueError(f"{agent.name} is collapsed and cannot interact until recovery")
     trust = visitor["trust"].get(aid, 0)
     need = {"worried": 10, "tired": -10}.get(agent.mood, 0)
     if sim.suppers and any(sim.suppers[-1]["missing"].values()):
@@ -290,6 +297,8 @@ def _target(sim, visitor, data):
     if aid not in sim.agents:
         raise ValueError("Choose a target villager who is in the village")
     agent = sim.agents[aid]
+    if agent.collapsed_until:
+        raise ValueError(f"{agent.name} is collapsed and cannot interact until recovery")
     if _distance(visitor, agent) > NEARBY:
         raise ValueError(f"Walk within {NEARBY} tiles of {agent.name} first")
     if _asleep(agent):
@@ -298,7 +307,7 @@ def _target(sim, visitor, data):
 
 
 def _witnesses(sim, visitor):
-    return [a for a in sim.agents.values() if _distance(visitor, a) <= NEARBY and not _asleep(a)]
+    return [a for a in sim.agents.values() if _distance(visitor, a) <= NEARBY and not _asleep(a) and not a.collapsed_until]
 
 
 def act(sim, vid, data: dict) -> dict:
@@ -461,14 +470,14 @@ def _pantry_action(sim, visitor, kind, data, prov):
     if kind == "gift":
         resource, amount = data.get("resource"), data.get("amount", 1)
         if resource not in RESOURCE_PLACES:
-            raise ValueError("resource must be fish or herbs")
+            raise ValueError("resource must be fish, herbs or water")
         if type(amount) is not int or not 1 <= amount <= 2:
             raise ValueError("amount must be 1 or 2")
         if here not in RESOURCE_PLACES[resource]:
             raise ValueError(f"Stand at the {' or '.join(RESOURCE_PLACES[resource])} to leave {resource}")
         _spend_units(visitor, amount)
         pantry[resource] += amount
-        unit = "fish" if resource == "fish" else "herb bundles" if amount > 1 else "herb bundle"
+        unit = "water units" if resource == "water" else "fish" if resource == "fish" else "herb bundles" if amount > 1 else "herb bundle"
         text, delta, effect = f"{name}, a visitor, left {amount} {unit} at the {_place_name(sim, here)}.", 2, resource
     elif kind == "help":
         task = data.get("task")
@@ -503,6 +512,15 @@ def _pantry_action(sim, visitor, kind, data, prov):
             _spend_units(visitor, 1)
             pantry["net_condition"] = "torn"
             text = f"{name}, a visitor, frayed the village net."
+        elif effect == "foul_barrel":
+            if "amount" in data:
+                raise ValueError("foul_barrel takes no amount")
+            _spend_units(visitor, 1)
+            # Repeated sabotage never extends the current fouling period.
+            source = sim.water_sources["rain_barrel"]
+            if source["fouled_until"] <= sim.step:
+                source["fouled_until"] = sim.step + 4
+            text = f"{name}, a visitor, fouled the rain barrel for at most four steps; the well remains usable."
         else:
             if "amount" in data:
                 raise ValueError("hole_boat takes no amount")
@@ -532,7 +550,7 @@ def _spend_units(visitor, amount):
 
 def allowed_actions(sim, visitor) -> list[dict]:
     here = _here(sim, visitor)
-    reachable = [a for a in sim.agents.values() if _distance(visitor, a) <= NEARBY and not _asleep(a)]
+    reachable = [a for a in sim.agents.values() if _distance(visitor, a) <= NEARBY and not _asleep(a) and not a.collapsed_until]
     targets = [a.id for a in reachable]
     actions = [{"kind": "move", "place": list(sim.world.places)}]
     if sim.weather == "storm":
@@ -571,10 +589,12 @@ def observe(sim, vid) -> dict:
         "time": f"{sim.minute // 60:02}:{sim.minute % 60:02}",
         "weather": sim.weather, "festival": sim.step < sim.festival_until,
         "cognition_mode": sim.cognition_mode, "pantry": dict(sim.pantry),
+        **sim.survival_view(),
         "you": public(visitor), "here": _here(sim, visitor),
         "villagers": [{
             "id": a.id, "name": a.name, "role": a.role, "persona": a.persona, "activity": a.activity,
             "mood": a.mood, "destination": a.destination, "x": a.x, "y": a.y,
+            "food": a.food, "water": a.water, "health": a.health, "collapsed": bool(a.collapsed_until),
             "distance": _distance(visitor, a), "asleep": _asleep(a),
             "trust_in_you": visitor["trust"].get(a.id, 0),
         } for a in sim.agents.values()],

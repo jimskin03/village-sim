@@ -46,6 +46,8 @@ def due(sim, aid):
     if sim.cognition_mode != "hybrid" or aid not in sim.agents:
         return False
     agent = sim.residents[aid]
+    if agent.collapsed_until:
+        return False
     pending = _pending(sim, aid)
     if _blocked(sim, agent) or not pending:
         return False

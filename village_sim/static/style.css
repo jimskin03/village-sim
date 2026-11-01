@@ -1974,3 +1974,8 @@ body:has(#replay-bar:not([hidden])) .toast {
 .visitor-quote {
   font-style: italic;
 }
+.survival-bars { display: grid; gap: 3px; margin-top: 6px; }
+.survival-stat { display: grid; grid-template-columns: 64px minmax(45px, 1fr); gap: 6px; align-items: center; font-size: 11px; text-transform: capitalize; }
+.survival-stat meter { width: 100%; height: 8px; accent-color: #91c7ab; }
+.survival-stat.low { color: #973f26; }
+.sprite.collapsed .sprite-body, .sprite.collapsed .sprite-head, .sprite.collapsed .sprite-legs { transform: rotate(75deg); }

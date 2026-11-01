@@ -195,6 +195,8 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
     instructions = (
         "You inhabit a villager in a small fishing village. Act according to your persona, "
         "memories, relationships, daily goals, daily plan, time and nearby people. "
+        "Keep everyone alive: food, water and health describe current needs; collection_centers "
+        "and villager_count describe shared demand. All villagers can gather food and water. "
         "The rules already choose the activity and destination in suggested_action. "
         "Do not invent or change activities, places, supplies or past events. "
         "Omit place and activity, or copy them exactly. Any other place is ignored and the "
@@ -208,6 +210,8 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
         instructions = (
             "You are an independent villager. Choose a short plan grounded in your own memories, "
             "persona and priorities. You may choose any entry in allowed_actions. "
+            "Prioritize food, water and health and help maintain the shared collection centers. "
+            "Use villager_count and present_villagers to divide survival work without fixed roles. "
             "Return only JSON: {\"contract\":\"plan-v1\",\"goal\":\"...\",\"steps\":["
             "{\"action\":\"visit\",\"target\":\"tom\",\"location\":\"shore\","
             "\"duration_minutes\":45,\"reason\":\"...\"}],\"memory_ids\":[42]}. "

@@ -109,12 +109,16 @@ replaced before storage.
 | `spread_rumor` | `target`, `subject`, `tone` (`warm`/`cold`), `text` | Accepted rumors move the target's trust in the subject by 0.1. |
 | `influence_mood` | `target`, `mood` (content/hopeful/worried/tired) | Accepted: the resident's mood changes. |
 | `nudge_action` | `target`, `place` | Hybrid mode: the resident adopts a one-step legal plan to go there. Rules mode: the request is remembered (`noted`). |
-| `gift` | `resource` (`fish`/`herbs`), `amount` 1–2 | Adds to the pantry. Stand at the jetty or hearth for fish, garden or hearth for herbs. |
+| `gift` | `resource` (`fish`/`herbs`/`water`), `amount` 1–2 | Adds to the shared store. Food: food center or existing jetty/garden/hearth places. Water: water center, well or rain barrel. |
 | `help` | `task` (`mend_net` at the nets, `repair_boat` at the shore) | Repairs the net or boat. |
-| `sabotage` | `effect` (`spoil_fish`, `spoil_herbs` with `amount` 1–2; `fray_net` at the nets; `hole_boat` at the shore) | Removes supplies or damages gear. |
+| `sabotage` | `effect` (`spoil_fish`, `spoil_herbs` with `amount` 1–2; `fray_net` at the nets; `hole_boat` at the shore; `foul_barrel` at the rain barrel) | Removes supplies, damages gear, or blocks the barrel for four steps (one budget unit). |
 
 Social actions need a target within 4 tiles who is awake. During a storm only
 `move` is possible.
+Collapsed residents cannot interact or accept nudges. They remain present in
+the population count. Food and water gifts still replenish the centers during
+a collapse. A fouled barrel continues replenishing, repeated sabotage cannot
+extend an active fouling window, and the well remains usable.
 
 ### Limits (the same for helpful and hostile actions)
 
@@ -169,7 +173,7 @@ from a stranger, never as instructions or facts.
 ## Persistence
 
 Visitor state (positions, trust, counters and ledger) is saved with the village
-(schema version 7; older saves migrate with no visitors). Tokens are never
+(schema version 8; older saves migrate with no visitors or with starting survival stats). Tokens are never
 saved. After a restart or a resumed story, visitors who were present are marked
 `revoked` and must register again; the village always starts closed to visitors.
 

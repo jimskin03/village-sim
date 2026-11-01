@@ -357,6 +357,8 @@ class Session:
         if not self.running:
             return
         for aid, brain in self.brains.items():
+            if self.sim.agents[aid].collapsed_until:
+                continue
             hybrid = self.sim.cognition_mode == "hybrid"
             conversation = conversations.active(self.sim, aid) if hybrid else None
             turn = conversations.context(self.sim, aid) if conversation else None
