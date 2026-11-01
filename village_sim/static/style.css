@@ -6,6 +6,9 @@
   --green: #315d51;
   --gold: #d5a667;
   --panel: #faf8f1;
+  --hud-surface: linear-gradient(155deg, #24413eef, #112c30f5);
+  --hud-edge: #cbb68650;
+  --hud-shadow: 0 8px 28px #061d2940, inset 0 1px #f8e6bb0d;
   font-family: Arial, Helvetica, sans-serif;
   color: var(--ink);
   background: var(--paper);
@@ -238,9 +241,9 @@ main {
 .hud-controls,
 .village-dock,
 .replay-bar {
-  border: 1px solid #b7c4a847;
-  background: #173236ed;
-  box-shadow: 0 8px 32px #051e2d30;
+  border: 1px solid var(--hud-edge);
+  background: var(--hud-surface);
+  box-shadow: var(--hud-shadow);
   color: #f0ead8;
   border-radius: 12px;
   pointer-events: auto;
@@ -268,9 +271,11 @@ main {
   place-items: center;
   width: 36px;
   height: 42px;
-  border: 1px solid #a6a78055;
+  border: 1px solid #d7b77666;
+  background: radial-gradient(ellipse at 50% 38%, #e6ae4930, #e6ae4900 75%);
+  box-shadow: inset 0 1px #ffe2a51a;
   border-radius: 10px 10px 5px 5px;
-  color: #e7b87a;
+  color: #f1c78a;
 }
 .brand-mark svg {
   width: 26px;
@@ -366,7 +371,7 @@ main {
   flex: none;
 }
 .icon-button:hover {
-  background: #a2b39c25;
+  background: #ddc58c20;
 }
 .icon-button svg {
   width: 19px;
@@ -404,14 +409,15 @@ main {
 }
 .map-navigation > span {
   padding: 9px 11px;
-  background: #102a33b8;
+  background: #112d32d9;
   border-radius: 6px;
   pointer-events: none;
 }
 .map-navigation button,
 .scene-tools button {
-  border: 1px solid #c0cebf55;
-  background: #102a33dd;
+  border: 1px solid var(--hud-edge);
+  background: var(--hud-surface);
+  box-shadow: 0 3px 12px #061d292b, inset 0 1px #f8e6bb0d;
   color: #f1e6cf;
   border-radius: 7px;
 }
@@ -422,8 +428,13 @@ main {
 }
 .map-navigation button[aria-pressed="true"],
 .scene-tools button[aria-pressed="true"] {
-  background: #b38b4d;
-  color: white;
+  background: linear-gradient(#d0ae6d, #b28d4f);
+  border-color: #e7ca8e;
+  color: #172c2b;
+}
+.map-navigation button:hover:not(:disabled),
+.scene-tools button:hover:not(:disabled) {
+  border-color: #e7ca8e;
 }
 .scene-tools {
   position: absolute;
@@ -508,7 +519,7 @@ main {
   font-size: 13px;
 }
 .village-dock button:hover {
-  background: #d5dfc81a;
+  background: #ddc58c1c;
 }
 .village-dock button[aria-expanded="true"] {
   color: #fae0a6;
@@ -1059,12 +1070,13 @@ main {
   bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
-  color: #f9eccb;
-  background: #142e30d9;
+  color: #fff1d5;
+  background: #142e30e8;
   padding: 3px 6px;
   font-size: 12px;
-  border: 1px solid #7d938144;
-  border-radius: 3px;
+  border: 1px solid #d8d1ad38;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px #081c2a30;
   white-space: nowrap;
   max-width: clamp(60px, 10vw, 130px);
   overflow: hidden;
@@ -1073,6 +1085,7 @@ main {
 .sprite.selected .sprite-name {
   border-color: #e8c37e;
   color: #f9db9b;
+  background: #3f3d2bef;
 }
 .sprite.selected:after {
   content: "";
@@ -1427,8 +1440,9 @@ dialog .setting-note {
     width: 132px;
     min-width: 114px;
     padding: 10px 12px;
-    background: #173236ed;
-    border: 1px solid #b7c4a847;
+    background: var(--hud-surface);
+    border: 1px solid var(--hud-edge);
+    box-shadow: var(--hud-shadow);
     border-radius: 10px;
     pointer-events: auto;
   }
@@ -1454,8 +1468,9 @@ dialog .setting-note {
     top: 80px;
     right: 12px;
     padding: 2px;
-    border: 1px solid #b7c4a847;
-    background: #173236ed;
+    border: 1px solid var(--hud-edge);
+    background: var(--hud-surface);
+    box-shadow: var(--hud-shadow);
     border-radius: 9px;
     color: #f0ead8;
     pointer-events: auto;
@@ -1753,18 +1768,18 @@ body:has(#replay-bar:not([hidden])) .toast {
   position: absolute;
   transform: translate(-50%, 12px);
   white-space: nowrap;
-  border: 1px solid #a6c3a877;
-  border-radius: 5px;
-  background: #173b32e8;
-  color: #e9efd8;
-  padding: 4px 7px;
+  border: 1px solid #bbc8a94d;
+  border-radius: 4px;
+  background: #183c36df;
+  color: #f0f1dc;
+  padding: 3px 6px;
   font-size: 10px;
   line-height: 1.4;
-  box-shadow: 0 2px 6px #06202c44;
+  box-shadow: 0 2px 4px #06202c33;
 }
 .state-marker.shortage {
-  border-color: #f0c38c;
-  background: #5f3929ed;
+  border-color: #dbb57a99;
+  background: #553e2de8;
   color: #ffe6bb;
 }
 .state-marker.shortage::before {
@@ -1779,10 +1794,10 @@ body:has(#replay-bar:not([hidden])) .toast {
   left: 50%;
   transform: translateX(-50%);
   white-space: nowrap;
-  background: #1f343ae8;
-  color: #cfdfcf;
-  border: 1px solid #8aa59b55;
-  border-radius: 8px;
+  background: #183237d9;
+  color: #dbe7d6;
+  border: 1px solid #aebda63b;
+  border-radius: 4px;
   padding: 2px 5px;
   font-size: 7px;
 }
@@ -2043,4 +2058,49 @@ body:has(#replay-bar:not([hidden])) .scene-viewport.overview { bottom: 190px; }
 }
 @media (max-width: 1000px) {
   .map-navigation > span { display: none; }
+}
+
+/* Asset view: the canvas is the village. DOM sprites stay as hit targets. */
+#world {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  image-rendering: pixelated;
+  display: none;
+}
+.scene.asset-view #world { display: block; }
+.scene.asset-view #village-painting { display: none; }
+/* The renderer lights sprites and terrain together; the painting retains its CSS light. */
+.scene.asset-view #daylight-wash,
+.scene.asset-view #hearth-light { display: none; }
+.scene.asset-view .sprite,
+.scene.asset-view .festival-visitor {
+  width: calc(100% * 32 / 1280);
+  height: calc(100% * 48 / 720);
+  transform: translate(-50%, -100%);
+  filter: none;
+}
+.scene.asset-view .sprite-body,
+.scene.asset-view .sprite-head,
+.scene.asset-view .sprite-legs,
+.scene.asset-view .sprite-shadow { display: none; }
+.scene.asset-view .sprite-name { bottom: calc(100% + 2px); }
+.scene.asset-view .sprite-message { bottom: calc(100% + 18px); }
+.scene.asset-view .sprite-brain { top: calc(100% + 1px); }
+.scene.asset-view .visitor-tag { bottom: calc(100% + 16px); }
+.scene.asset-view .sprite.selected:after {
+  left: 12%;
+  width: 76%;
+  bottom: 0;
+}
+.portrait-art::before,
+.portrait-art::after { content: none; }
+.portrait-art {
+  background-color: #1c3330;
+  background-repeat: no-repeat;
+  background-size: 240% auto;
+  background-position: center 2%;
+  image-rendering: pixelated;
 }

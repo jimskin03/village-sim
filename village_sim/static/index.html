@@ -12,6 +12,7 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/style.css" />
     <script src="/sound.js" defer></script>
+    <script src="/world-view.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -165,12 +166,14 @@
         >
           <div id="scene-inner" class="scene-inner">
             <img
+              id="village-painting"
               src="/village-night-background.jpg"
               width="1280"
               height="720"
               alt="A lantern-lit fishing village with thatched cottages, a garden, boats and a wooden jetty beside blue water."
               draggable="false"
             />
+            <canvas id="world" width="1280" height="720" aria-hidden="true"></canvas>
             <div id="daylight-wash" aria-hidden="true"></div>
             <div id="hearth-light" aria-hidden="true"></div>
             <div id="place-labels"></div>
