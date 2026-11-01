@@ -13,7 +13,7 @@ from typing import Callable
 
 from .cognition.memory import MemoryStore, memory_view
 from .cognition import planning, conversations, reflection
-from . import visitors, survival
+from . import visitors, survival, work
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -686,56 +686,15 @@ class Simulation:
         return self.snapshot()
 
     def _result_options(self, agent, place):
-        if survival.collapsed(agent):
-            return []
-        if place == "garden" and agent.food <= 40:
-            return ["first_basil", "mint_bundle", "wilted_seedlings"]
-        if self.weather == "storm" or self.step < self.festival_until or not (6 <= self.minute // 60 < 18):
-            return []
-        if place == "nets":
-            return ["mended_mesh", "knotted_rope"]
-        if place == "jetty" or (agent.role == "fisher" and place == "shore"):
-            if self.pantry["net_condition"] == "torn":
-                return ["torn_mesh"]
-            return ["silver_fish", "mackerel", "empty_net", "torn_mesh"]
-        if place == "garden":
-            return ["first_basil", "mint_bundle", "wilted_seedlings"]
-        if agent.role == "boatwright" and place == "shore":
-            return ["sealed_hull", "sound_boat", "leaking_boat"]
-        return []
+        return work.options(self, place, agent.role, hungry=agent.food <= 40,
+                            collapsed=survival.collapsed(agent))
 
     def _work(self, agent, place, requested=None):
         options = self._result_options(agent, place)
         if not options:
             return
-        # Useful work is common; failures still have material consequences.
-        result = requested if requested in options else self.rng.choice(options[:2] * 3 + options[2:])
-        detail, success = {
-            "silver_fish": ("caught a silver fish", True),
-            "mackerel": ("landed a striped mackerel", True),
-            "empty_net": ("hauled up an empty net", False),
-            "torn_mesh": ("found a torn mesh in the village net", False),
-            "first_basil": ("picked the first basil from a new stem", True),
-            "mint_bundle": ("gathered a fragrant bundle of mint", True),
-            "wilted_seedlings": ("found the herb seedlings wilted", False),
-            "sealed_hull": ("sealed a leaking hull with fresh pitch", True),
-            "sound_boat": ("tested a boat that floated soundly", True),
-            "leaking_boat": ("found a boat that would not float", False),
-            "mended_mesh": ("mended the torn mesh of the village net", True),
-            "knotted_rope": ("secured the net with a new rope knot", True),
-        }[result]
-        if result in ("silver_fish", "mackerel"):
-            self.pantry["fish"] += 1
-        elif result in ("first_basil", "mint_bundle"):
-            self.pantry["herbs"] += 1
-        elif result == "torn_mesh":
-            self.pantry["net_condition"] = "torn"
-        elif result in ("mended_mesh", "knotted_rope"):
-            self.pantry["net_condition"] = "sound"
-        elif result == "leaking_boat":
-            self.pantry["boat_condition"] = "leaking"
-        elif result in ("sealed_hull", "sound_boat"):
-            self.pantry["boat_condition"] = "sound"
+        outcome = work.perform(self, options, requested)
+        result, detail, success = outcome["result"], outcome["detail"], outcome["success"]
         agent.work_count += 1
         agent.result = result
         agent.mood = "content" if success else "worried"
@@ -743,7 +702,7 @@ class Simulation:
         agent.thought = agent.thought or text
         self.event(text, "work", [agent.id], place=place,
                    collection_center=survival.FOOD_CENTER if result in ("silver_fish", "mackerel", "first_basil", "mint_bundle") else None,
-                   significant=result in ("torn_mesh", "leaking_boat", "wilted_seedlings"))
+                   significant=outcome["significant"])
         key = f"{self.day}:{agent.id}:{place}"
         summary = self.daily_work.setdefault(key, {"day": self.day, "agent": agent.id, "place": place, "results": {}})
         summary["results"][result] = summary["results"].get(result, 0) + 1
@@ -752,7 +711,8 @@ class Simulation:
 
     def _supper(self):
         diners = sorted((a for a in self.agents.values() if not survival.collapsed(a)), key=lambda a: (a.food, a.id))
-        need_fish, need_herbs = len(self.agents), max(1, (len(self.agents) + 2) // 3)
+        needs = survival.supper_need(self)
+        need_fish, need_herbs = needs["fish"], needs["herbs"]
         fish, herbs = min(len(diners), self.pantry["fish"]), min(need_herbs, len(diners), self.pantry["herbs"])
         self.pantry["fish"] -= fish
         self.pantry["herbs"] -= herbs

@@ -1924,6 +1924,10 @@ body:has(#replay-bar:not([hidden])) .toast {
   gap: 6px;
   margin: 10px 0 16px;
 }
+#visitor-join-prompt {
+  width: 100%;
+  margin-bottom: 12px;
+}
 .visitor-controls button,
 .visitor-card button {
   border: 1px solid #d1d9c6;

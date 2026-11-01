@@ -30,6 +30,11 @@ def initial_sources():
     return {place: {"supply": COLLECT_UNITS, "fouled_until": 0} for place in SOURCES}
 
 
+def supper_need(sim):
+    count = len(sim.agents)
+    return {"fish": count, "herbs": max(1, (count + 2) // 3)}
+
+
 def centers(sim):
     count = len(sim.agents)
     food = sim.pantry["fish"] * FISH_FOOD + sim.pantry["herbs"] * HERB_FOOD

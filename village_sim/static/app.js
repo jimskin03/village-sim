@@ -335,6 +335,30 @@ function renderVisitorSprites(container) {
     el.setAttribute("aria-label", `${v.name}, a visitor, ${v.activity}`);
   });
 }
+function visitorJoinPrompt() {
+  const origin = location.origin;
+  const invite = liveState?.visitor_invite_required
+    ? '\nAn invite code is required. Ask the human for it and add the field "invite" to the registration JSON. The code is not included here.'
+    : "";
+  return `Visit Lantern Bay, a small fishing village, using HTTP requests from your harness.
+Session URL: ${origin}
+You choose your own goal and may help or harm the village.
+
+Register: POST ${origin}/api/visitors/register
+Content-Type: application/json
+{"name": "<CHOOSE A NAME>", "look": "<OPTIONAL>"}
+Choose a unique name of 1-24 letters, digits, spaces, hyphens or apostrophes. Replace <OPTIONAL> with lantern, tide, moss, ember, dusk or pearl, or omit look. You may add intent (up to 200 characters).${invite}
+
+Read the returned welcome summary. Keep the one-time token private and use the returned visitor_id in the endpoints below. This visitor token is your pass.
+Observe: GET ${origin}/api/visitors/<VISITOR_ID>/observation
+Act: POST ${origin}/api/visitors/<VISITOR_ID>/act
+Leave: POST ${origin}/api/visitors/<VISITOR_ID>/leave with {}
+For these three requests send Authorization: Bearer <VISITOR_TOKEN>. For POST requests also send Content-Type: application/json.
+Fetch an observation first. Act with {"step": <CURRENT_STEP>, "kind": "move", "place": "garden"}, or choose another action and its fields from allowed_actions. Movement takes simulation steps; wait until here is your destination before working. You can move, talk, fish, garden, repair, give gifts, influence villagers or sabotage supplies where the world permits.
+You have an 8-step lease, renewed by observations and successful actions. Poll observations before it expires, including while waiting to arrive. Limits: 2 actions per step and 6 pantry units per day, shared by work, gift, help and sabotage. Read error messages; refresh on stale actions and wait for a later step after a rate limit.
+Full docs: ${origin}/docs`;
+}
+
 function renderVisitors() {
   const visiting = state.visiting || { visitors: [], ledger: [] };
   const enabled = Boolean(liveState?.visitors_enabled);
@@ -343,6 +367,18 @@ function renderVisitors() {
     : enabled
       ? `Lantern Bay is welcoming visiting agents${liveState?.visitor_invite_required ? " with an invite code" : ""}. Register at POST /api/visitors/register.`
       : "Lantern Bay is closed to visitors. Residents carry on as usual.";
+  const joinReason = recording
+    ? "Return to the live village to copy a join prompt."
+    : !enabled
+      ? "Open the village to visitors to copy a join prompt."
+      : "Copy this prompt into an agent harness. The agent chooses its name and goal.";
+  $("#copy-join-prompt").disabled = Boolean(recording) || !enabled;
+  $("#copy-join-prompt").title = joinReason;
+  $("#visitor-join-note").textContent = joinReason;
+  if (recording || !enabled) {
+    $("#visitor-join-prompt").hidden = true;
+    $("#visitor-join-prompt").value = "";
+  }
   document.querySelectorAll("[data-visitor-action]").forEach((button) => {
     const action = button.dataset.visitorAction;
     button.disabled = Boolean(recording) || (action === "enable" ? enabled : !enabled && action === "disable");
@@ -354,7 +390,7 @@ function renderVisitors() {
   $("#visitor-list").querySelectorAll("[data-expel]").forEach((button) =>
     button.addEventListener("click", () => visitorControl("expel", { visitor_id: button.dataset.expel })));
   const names = Object.fromEntries(visiting.visitors.map((v) => [v.id, v.name]));
-  const residentName = (id) => state.agents.find((a) => a.id === id)?.name || id;
+  const residentName = (id) => state.agents.find((a) => a.id === id)?.name || world.places.find((p) => p.id === id)?.name || id;
   $("#visitor-ledger").innerHTML = [...visiting.ledger].reverse().map((row) =>
     `<p class="ledger-row"><small>DAY ${esc(row.day)} · ${esc(row.time)}</small>${esc(row.name || names[row.visitor] || row.visitor)} · ${esc(String(row.kind).replaceAll("_", " "))}${row.target ? ` → ${esc(residentName(row.target))}` : ""} · <em>${esc(row.outcome)}</em></p>`,
   ).join("") || '<p class="empty-note">Nothing has happened yet.</p>';
@@ -369,6 +405,22 @@ async function visitorControl(action, extra = {}) {
 }
 document.querySelectorAll("[data-visitor-action]").forEach((button) =>
   button.addEventListener("click", () => visitorControl(button.dataset.visitorAction)));
+async function copyVisitorJoinPrompt() {
+  if (recording || !liveState?.visitors_enabled) return;
+  const text = visitorJoinPrompt();
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Join prompt copied.");
+  } catch {
+    const field = $("#visitor-join-prompt");
+    field.value = text;
+    field.hidden = false;
+    field.focus();
+    field.select();
+    toast("Clipboard unavailable. Copy the selected join prompt.");
+  }
+}
+$("#copy-join-prompt").addEventListener("click", copyVisitorJoinPrompt);
 function survivalBars(agent) {
   if (![agent.food, agent.water, agent.health].every(Number.isFinite)) return "";
   return `<span class="survival-bars">${["food", "water", "health"].map((stat) => {

@@ -1,8 +1,9 @@
-"""Visiting-agent example. Replace choose() with your own agent.
+"""Follow a copied join prompt. Replace the sample chooser with your own agent.
 
 Start the village with visitors enabled first, for example
 `python3 -m village_sim --visitors`, then run:
 
+    python3 examples/visitor_harness.py --url 'https://<YOUR_VILLAGE_HOST>' --name Wanderer
     python3 examples/visitor_harness.py --mode gentle
     python3 examples/visitor_harness.py --mode hostile
 
@@ -25,6 +26,19 @@ def options(observation, kind):
 def nearest(observation):
     awake = [v for v in observation["villagers"] if not v["asleep"]]
     return min(awake, key=lambda v: v["distance"]) if awake else None
+
+
+def choose_work(observation):
+    """SAMPLE: walk to the garden and try the everyday work offered there."""
+    if (work := options(observation, "work")) and observation["limits"]["pantry_units_left_today"]:
+        return {"kind": "work", "task": work["task"][0]}
+    if observation["here"] == "garden":
+        if speak := options(observation, "speak"):
+            return {"kind": "speak", "target": speak["target"][0], "text": "Hello from the garden."}
+        return None
+    if observation["you"]["destination"] != "garden":
+        return {"kind": "move", "place": "garden"}
+    return None  # Keep observing while the world moves us, renewing the lease.
 
 
 def choose_gentle(observation):
@@ -69,10 +83,14 @@ def main():
     parser.add_argument("--url", default="http://127.0.0.1:8000")
     parser.add_argument("--name", default="Wanderer")
     parser.add_argument("--look", default="tide", choices=["lantern", "tide", "moss", "ember", "dusk", "pearl"])
-    parser.add_argument("--mode", default="gentle", choices=["gentle", "hostile"])
+    parser.add_argument("--mode", default="work", choices=["work", "gentle", "hostile"])
     parser.add_argument("--intent", default="")
+    parser.add_argument("--steps", type=int, help="Leave after observing this many distinct steps")
     args = parser.parse_args()
-    choose = choose_gentle if args.mode == "gentle" else choose_hostile
+    if args.steps is not None and args.steps < 1:
+        parser.error("--steps must be positive")
+    args.url = args.url.rstrip("/")
+    choose = {"work": choose_work, "gentle": choose_gentle, "hostile": choose_hostile}[args.mode]
     token = None
 
     def request(path, body=None):
@@ -91,13 +109,16 @@ def main():
         registration["invite"] = os.environ["VILLAGE_SIM_VISITOR_INVITE"]
     reply = request("/api/visitors/register", registration)
     token, vid = reply["token"], reply["visitor_id"]
+    print("Welcome: " + json.dumps(reply["welcome"], ensure_ascii=False), flush=True)
     print(f"{args.name} arrived as {vid} ({args.mode} sample). Ctrl+C to leave.", flush=True)
     last_step = -1
+    observed_steps = 0
     try:
         while True:
             observation = request(reply["observation_url"])
             if observation["step"] != last_step:
                 last_step = observation["step"]
+                observed_steps += 1
                 action = choose(observation)
                 if action:
                     try:
@@ -110,6 +131,8 @@ def main():
                             print(f"Pass ended: {detail}")
                             return
                         print(f"Step {last_step}: {action['kind']} not applied ({error.code}: {detail})")
+                if args.steps is not None and observed_steps >= args.steps:
+                    break
             time.sleep(0.3)
     except KeyboardInterrupt:
         pass
