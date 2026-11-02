@@ -191,10 +191,14 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
     context["recent_memories"] = observation.get("recent_memories", agent["memory"][-12:])
     # Vectors are storage/retrieval data, not useful language-model context.
     for key in ("recent_memories", "relevant_memories"):
-        context[key] = memory_view(context.get(key, []), characters=3000 if key == "recent_memories" else 6000)
+        context[key] = memory_view(context.get(key, []), characters=3000 if key == "recent_memories" else 4000)
     instructions = (
         "You inhabit a villager in a small fishing village. Act according to your persona, "
-        "memories, relationships, daily goals, daily plan, time and nearby people. "
+        "your living memories, private life_history, relationships, daily goals, daily plan, time and nearby people. "
+        "life_history contains your own subjective, proposed pre-simulation recollections and interpretations; "
+        "relationship impressions are yours and do not state what another villager remembers. They may be mistaken "
+        "and are not entries in the village journal. Current world state and events you "
+        "actually experienced take precedence. Do not claim another villager's private recollections. "
         "Keep everyone alive: food, water and health describe current needs; collection_centers "
         "and villager_count describe shared demand. All villagers can gather food and water. "
         "The rules already choose the activity and destination in suggested_action. "
@@ -218,6 +222,7 @@ def plan(config: ProviderConfig, observation: dict) -> dict:
             "Copy action/location/target from a legal entry; use null for an absent target. "
             "Use 1–8 steps, 15–180 minutes each in multiples of 15, at most one day total. "
             "Goal and reasons are at most 200 characters. Cite only supplied memory IDs. "
+            "memory_ids cite numeric live journal memories only; string IDs in life_history are not plan evidence. "
             "Do not invent people, places, resources, commitments or past events. The world "
             "determines movement and work outcomes. Visits are attempts to meet someone, "
             "not agreements on their behalf. trust and preferred_helpers record who has "
@@ -287,7 +292,10 @@ def reflect(config: ProviderConfig, context: dict) -> dict:
 
 def converse(config: ProviderConfig, context: dict) -> dict:
     instructions = (
-        "Speak as this villager using only your own supplied memories and the shared transcript. "
+        "Speak as this villager using your own supplied living memories, private life_history, and the shared transcript. "
+        "life_history is subjective proposed pre-simulation recollection, may be mistaken, and is not a village journal entry. "
+        "Any private relationship impression describes only your own view, not your partner's memory or feelings. "
+        "Current world state and events you actually experienced take precedence. Never reveal another villager's private recollections. "
         "Consider your goals, daily plan and accepted commitments independently. Negotiate a meeting "
         "with propose, counter, accept or decline; use say for ordinary conversation. "
         "Return JSON with contract 'conversation-v1', the supplied conversation_id and turn, move, "

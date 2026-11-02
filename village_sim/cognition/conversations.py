@@ -6,6 +6,7 @@ import math
 from ..decisions import Action
 from .. import survival
 from .memory import memory_view
+from . import autobiography
 
 CONTRACT = "conversation-v1"
 TASKS = {
@@ -101,7 +102,9 @@ def context(sim, aid):
                         if c["status"] == "scheduled" and aid in c["terms"]["participants"]],
         "conversation": copy.deepcopy(conversation),
         "trust": {partner: agent.trust[partner] for partner in sorted(agent.trust)},
-        "memories": memory_view(sim.memory_store(aid).retrieve(query, now=sim.total_minutes, limit=12), characters=6000),
+        "memories": memory_view(sim.memory_store(aid).retrieve(query, now=sim.total_minutes, limit=12), characters=4000),
+        "life_history": (autobiography.recall(sim.autobiographies.get(aid), query)
+                         if sim.autobiography_enabled else None),
         "tasks": TASKS, "earliest_start": sim.total_minutes + 15 + max(
             travel(sim, person, "bench") for person in conversation["participants"]),
     }

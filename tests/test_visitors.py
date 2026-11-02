@@ -34,6 +34,7 @@ def beside(sim, visitor, aid):
 def stand(sim, visitor, place):
     visitor["x"], visitor["y"] = sim.world.point(place)
     visitor["destination"] = place
+    visitor["activity"] = f"standing at the {sim.world.places[place]['name']}"
 
 
 class VisitorRuleTests(unittest.TestCase):
@@ -41,26 +42,38 @@ class VisitorRuleTests(unittest.TestCase):
         self.sim = morning()
         self.v = visitors.register(self.sim, {"name": "Wanderer", "look": "tide", "intent": "see the bay"})
         self.vid = self.v["id"]
+        stand(self.sim, self.v, "guest_home")
 
     def act(self, **data):
         return visitors.act(self.sim, self.vid, {"step": self.sim.step, **data})
 
     def test_registration_places_a_distinct_visitor_at_the_entry(self):
-        self.assertEqual(self.vid, "visitor-1")
-        self.assertEqual((self.v["x"], self.v["y"]), self.sim.world.point(visitors.ENTRY))
-        self.assertEqual(self.v["color"], visitors.LOOKS["tide"])
-        snap = self.sim.snapshot()["visiting"]
-        self.assertEqual(snap["visitors"][0]["name"], "Wanderer")
+        sim = morning()
+        visitor = visitors.register(sim, {"name": "First Arrival", "look": "tide"})
+        self.assertEqual(visitor["id"], "visitor-1")
+        self.assertEqual((visitor["x"], visitor["y"]), sim.world.point("jetty"))
+        self.assertEqual(visitor["destination"], "guest_home")
+        self.assertTrue(visitor["activity"].startswith("arriving by boat"))
+        self.assertEqual(visitor["color"], visitors.LOOKS["tide"])
+        snap = sim.snapshot()["visiting"]
+        self.assertEqual(snap["visitors"][0]["name"], "First Arrival")
         self.assertEqual(snap["ledger"][-1]["kind"], "arrive")
-        self.assertEqual(len(self.sim.agents), 3)  # residents unchanged
-        self.assertNotIn(self.vid, self.sim.agents)
-        for bad in ({"name": ""}, {"name": "Mara"}, {"name": "Wren"}, {"name": "Wanderer"},
+        self.assertEqual(len(sim.agents), 3)  # residents unchanged
+        self.assertNotIn(visitor["id"], sim.agents)
+        self.assertEqual(visitors.observe(sim, visitor["id"])["allowed_actions"], [])
+        with self.assertRaisesRegex(ValueError, "still landing"):
+            visitors.act(sim, visitor["id"], {"step": sim.step, "kind": "move", "place": "garden"})
+        for _ in range(visitors.ARRIVAL_STEPS):
+            sim.tick()
+        self.assertFalse(visitor["activity"].startswith("arriving by boat"))
+        self.assertEqual(visitor["destination"], "guest_home")
+        for bad in ({"name": ""}, {"name": "Mara"}, {"name": "Wren"}, {"name": "First Arrival"},
                     {"name": "<script>"}, {"name": "Ok", "look": "neon"}, {"name": "Ok", "extra": 1},
                     {"name": "Ok", "intent": "x" * 201}):
             with self.assertRaises(ValueError, msg=bad):
-                visitors.register(self.sim, bad)
+                visitors.register(sim, bad)
         with self.assertRaises(PermissionError):
-            visitors.register(self.sim, {"name": "Ok"}, invite_ok=False)
+            visitors.register(sim, {"name": "Ok"}, invite_ok=False)
 
     def test_registration_limits(self):
         for i in range(3):
@@ -265,7 +278,7 @@ class VisitorRuleTests(unittest.TestCase):
 
     def test_lease_expires_and_observation_lists_typed_actions(self):
         obs = visitors.observe(self.sim, self.vid)
-        self.assertEqual(obs["here"], visitors.ENTRY)
+        self.assertEqual(obs["you"]["destination"], "guest_home")
         self.assertEqual(obs["you"]["id"], self.vid)
         self.assertIn("formula", obs["receptivity"])
         self.assertTrue(all(a["kind"] in visitors.KINDS for a in obs["allowed_actions"]))
@@ -431,6 +444,8 @@ class VisitorRuleTests(unittest.TestCase):
     def test_hybrid_nudge_goes_through_the_plan_contract(self):
         sim = morning(mode="hybrid")
         v = visitors.register(sim, {"name": "Guide"})
+        for _ in range(visitors.ARRIVAL_STEPS):
+            sim.tick()
         beside(sim, v, "tom")
         v["trust"]["tom"] = 10
         result = visitors.act(sim, v["id"], {"step": sim.step, "kind": "nudge_action", "target": "tom", "place": "bench"})
@@ -518,6 +533,8 @@ class VisitorServerTests(unittest.TestCase):
         self.assertEqual(obs["welcome"]["clock"]["time"], "01:30")
         self.assertEqual(obs["next_work_step"], 48)
         self.assertEqual(obs["timing"]["poll_after_seconds"], 0.5)
+        visitor = self.session.sim.visiting["visitors"][vid]
+        visitor["activity"] = "standing at the jetty"
         self.session.sim.step += 1
         before = copy.deepcopy(self.session.sim.visiting)
         status, error = self.call(f"/api/visitors/{vid}/act",
@@ -615,9 +632,15 @@ class VisitorServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(reg["welcome"], obs["welcome"])
         self.assertNotIn("token", json.dumps(obs["welcome"]))
+        self.assertEqual(obs["here"], "jetty")
+        self.assertEqual(obs["allowed_actions"], [])
         other = self.register("Second")
         self.assertEqual(self.call(f"/api/visitors/{vid}/act", {"step": obs["step"], "kind": "move", "place": "jetty"},
                                    bearer=other["token"])[0], 401)
+        with self.session.condition:
+            for _ in range(visitors.ARRIVAL_STEPS):
+                self.session.sim.tick()
+        obs = self.call(f"/api/visitors/{vid}/observation", bearer=token)[1]
         status, result = self.call(f"/api/visitors/{vid}/act", {"step": obs["step"], "kind": "move", "place": "jetty"},
                                    bearer=token)
         self.assertEqual((status, result["outcome"]), (200, "accepted"))
@@ -650,6 +673,8 @@ class VisitorServerTests(unittest.TestCase):
 
     def test_example_harness_follows_join_flow_and_leaves(self):
         self.enable()
+        self.session.interval = 0.2
+        self.session.thread.start()
         script = Path(__file__).resolve().parents[1] / "examples" / "visitor_harness.py"
         run = subprocess.run([sys.executable, str(script), "--url", self.base,
                               "--name", "Harness Wayfarer", "--steps", "1"],
@@ -666,6 +691,8 @@ class VisitorServerTests(unittest.TestCase):
 
     def test_example_harness_rechooses_from_stale_snapshot(self):
         self.enable()
+        self.session.interval = 0.2
+        self.session.thread.start()
         script = Path(__file__).resolve().parents[1] / "examples" / "visitor_harness.py"
         original = visitors.act
         calls = 0
@@ -683,7 +710,7 @@ class VisitorServerTests(unittest.TestCase):
                                  text=True, capture_output=True, timeout=10)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(calls, 2)
-        self.assertIn("Step 1: move → accepted", run.stdout)
+        self.assertIn("Step 3: move → accepted", run.stdout)
         self.assertIn("Quick Wayfarer left", run.stdout)
         self.assertEqual([row["kind"] for row in self.session.sim.visiting["ledger"]],
                          ["arrive", "move", "left"])

@@ -61,7 +61,7 @@ const context = vm.createContext({
   },
   state: { agents: [], visiting: { visitors: [{
     id: 'visitor-1', name: "O'Bay-7", look: 'tide', color: '#4fb6d8',
-    status: 'active', activity: 'arriving', intent: 'see the bay',
+    status: 'active', activity: 'arriving by boat at the Old jetty', intent: 'see the bay',
   }], ledger: [] } },
   recording: null, operatorUnlocked: false, world: { places: [{id:'garden', name:'Kitchen garden'}] },
   document: { querySelector: element, querySelectorAll() { return []; } },
@@ -95,6 +95,7 @@ vm.runInContext(
   assert.ok(prompt.includes('timing.poll_after_seconds'));
   assert.ok(prompt.includes('pantry_units_left_today'));
   assert.ok(prompt.includes('stale_action'));
+  assert.ok(prompt.includes('boat lands at the jetty'));
   assert.ok(prompt.includes('may help or harm'));
   assert.ok(prompt.includes('Authorization: Bearer <VISITOR_TOKEN>'));
   assert.ok(!prompt.includes('"invite"'));
@@ -136,6 +137,56 @@ vm.runInContext(
   assert.equal(field.hidden, true);
   assert.equal(field.value, '');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        run = subprocess.run(["node", "-e", script, str(STATIC / "app.js")],
+                             text=True, capture_output=True, timeout=10)
+        self.assertEqual(run.returncode, 0, run.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is optional for viewer checks")
+    def test_arrival_draws_boat_until_the_visitor_lands(self):
+        script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const visitor = { id: 'visitor-1', name: 'Sailor', color: '#4fb6d8', status: 'active',
+  activity: 'arriving by boat at the Old jetty', x: 27, y: 13 };
+const children = [];
+function makeElement() {
+  return { dataset: {}, style: { setProperty() {} }, attributes: {}, className: '',
+    setAttribute(name, value) { this.attributes[name] = value; },
+    querySelector() { return { textContent: '', hidden: false }; },
+    remove() { children.splice(children.indexOf(this), 1); } };
+}
+const container = {
+  append(element) { children.push(element); },
+  querySelectorAll(selector) {
+    const cls = selector.slice(1);
+    return children.filter((el) => el.className.split(' ').includes(cls));
+  },
+  querySelector(selector) {
+    const match = selector.match(/\[data-(arrival-for|visitor)="([^"]+)"\]/);
+    return match ? children.find((el) => el.dataset[match[1] === 'visitor' ? 'visitor' : 'arrivalFor'] === match[2]) : null;
+  },
+};
+const context = vm.createContext({
+  state: { visiting: { visitors: [visitor] } },
+  world: { places: [{ id: 'jetty', x: 27, y: 13 }] },
+  CSS: { escape: (value) => value }, document: { createElement: makeElement },
+});
+const facing = source.slice(source.indexOf('function trackFacing'), source.indexOf('function placePosition'));
+const visitorRenderer = source.slice(source.indexOf('function activeVisitors()'), source.indexOf('function renderVisitors()'));
+vm.runInContext(facing + visitorRenderer, context);
+context.renderVisitorSprites(container);
+const boat = children.find((el) => el.className === 'visitor-arrival-boat');
+const sprite = children.find((el) => el.className.includes('visitor-sprite'));
+assert.ok(boat);
+assert.match(boat.attributes['aria-label'], /landing at the jetty/);
+assert.equal(sprite.hidden, true);
+visitor.activity = 'walking to the Guest cottage';
+context.renderVisitorSprites(container);
+assert.equal(children.some((el) => el.className === 'visitor-arrival-boat'), false);
+assert.equal(sprite.hidden, false);
 """
         run = subprocess.run(["node", "-e", script, str(STATIC / "app.js")],
                              text=True, capture_output=True, timeout=10)

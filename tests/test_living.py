@@ -322,7 +322,7 @@ class LivingSeasonTests(unittest.TestCase):
         self.assertEqual(migrated.gameplay, "legacy")
         self.assertEqual(migrated.agents["mara"].traits["fairness"], knowledge.TRAITS["mara"]["fairness"])
         self.assertEqual(export_session(migrated)["schema_version"], SCHEMA_VERSION)
-        self.assertEqual(SCHEMA_VERSION, 10)
+        self.assertEqual(SCHEMA_VERSION, 11)
 
     def test_legacy_wells_stay_uncapped_until_the_living_season_is_chosen(self):
         sim = Simulation(1, 1)

@@ -137,7 +137,11 @@ async function post(path, data, retried = false) {
 }
 async function control(action, extra = {}) {
   try {
-    await post("/api/control", { action, ...extra });
+    const next = await post("/api/control", { action, ...extra });
+    if (action === "autobiography") {
+      acceptLive(next);
+      toast(extra.enabled ? "Proposed life histories imported." : "Life histories turned off.");
+    }
   } catch (error) {
     toast(error.message);
   }
@@ -271,6 +275,14 @@ function render(next) {
   $("#cognition-mode").disabled = Boolean(recording);
   $("#gameplay-mode").value = state.gameplay || "legacy";
   $("#gameplay-mode").disabled = Boolean(recording);
+  const autobiographiesEnabled = Boolean(liveState?.autobiography_enabled);
+  const autobiographyError = liveState?.autobiography_error;
+  $("#autobiography-status").textContent = autobiographyError || (autobiographiesEnabled
+    ? "Enabled for current residents and future arrivals. Old memories and journal events were left intact."
+    : "Off. Enabling adds the draft only to each resident’s private history; existing memories remain intact.");
+  $("#autobiography-toggle").textContent = autobiographiesEnabled
+    ? "Turn off life histories"
+    : autobiographyError ? "Retry importing histories" : "Import proposed histories";
   if (!recording) $("#speed").value = state.interval;
   $("#play").innerHTML = icon(
     (recording ? !replayPlaying : state.paused) ? "play" : "pause",
@@ -422,10 +434,32 @@ function activeVisitors() {
 }
 function renderVisitorSprites(container) {
   const present = activeVisitors();
+  const arrivals = present.filter((visitor) => visitor.activity.startsWith("arriving by boat"));
+  container.querySelectorAll(".visitor-arrival-boat").forEach((boat) => {
+    if (!arrivals.some((visitor) => visitor.id === boat.dataset.arrivalFor)) boat.remove();
+  });
   container.querySelectorAll(".visitor-sprite").forEach((el) => {
     if (!present.some((v) => v.id === el.dataset.visitor)) el.remove();
   });
   present.forEach((v) => {
+    const landing = v.activity.startsWith("arriving by boat");
+    let boat = container.querySelector(`[data-arrival-for="${CSS.escape(v.id)}"]`);
+    if (landing && !boat) {
+      boat = document.createElement("span");
+      boat.className = "visitor-arrival-boat";
+      boat.dataset.arrivalFor = v.id;
+      boat.setAttribute("role", "img");
+      boat.setAttribute("aria-label", `${v.name} arriving by boat and landing at the jetty`);
+      boat.innerHTML = '<span class="arrival-passenger"><i></i></span><span class="arrival-sail"></span><span class="arrival-hull"></span><span class="arrival-wake"></span>';
+      container.append(boat);
+      const jetty = world.places.find((place) => place.id === "jetty");
+      if (jetty) {
+        boat.style.left = `${(((jetty.x + 0.5) * 32) / 1280) * 100}%`;
+        boat.style.top = `${(((jetty.y + 0.5) * 32) / 720) * 100}%`;
+      }
+      boat.style.setProperty("--agent-color", v.color);
+      boat.style.zIndex = 3 + Math.floor(v.y / 4);
+    }
     let el = container.querySelector(`[data-visitor="${CSS.escape(v.id)}"]`);
     if (!el) {
       el = document.createElement("span");
@@ -435,6 +469,7 @@ function renderVisitorSprites(container) {
         '<span class="sprite-shadow"></span><span class="sprite-legs"></span><span class="sprite-body"></span><span class="sprite-head"></span><span class="sprite-name"></span><span class="visitor-tag">visitor</span>';
       container.append(el);
     }
+    el.hidden = landing;
     el.className = `sprite visitor-sprite${v.activity.startsWith("walking") ? " walking" : ""}`;
     el.style.left = `${(((v.x + 0.5) * 32) / 1280) * 100}%`;
     el.style.top = `${(((v.y + 0.5) * 32) / 720) * 100}%`;
@@ -472,7 +507,7 @@ Observe: GET ${origin}/api/visitors/<VISITOR_ID>/observation
 Act: POST ${origin}/api/visitors/<VISITOR_ID>/act
 Leave: POST ${origin}/api/visitors/<VISITOR_ID>/leave with {}
 For these three requests send Authorization: Bearer <VISITOR_TOKEN>. For POST requests also send Content-Type: application/json.
-Fetch an observation first. Move with {"step": <CURRENT_STEP>, "kind": "move", "place": "garden"}. Movement takes simulation steps; wait until here is your destination before working. At the garden, work with {"step": <CURRENT_STEP>, "kind": "work", "task": "garden"}; at jetty or shore use "task": "fish". Work takes task, not place. Other work tasks: mend_net at nets; repair_boat at shore. Choose currently available actions and fields from allowed_actions; choose one value from each listed array.
+Fetch an observation first. Your boat lands at the jetty before you walk to the guest cottage; wait while your activity says you are arriving. Move with {"step": <CURRENT_STEP>, "kind": "move", "place": "garden"}. Movement takes simulation steps; wait until here is your destination before working. At the garden, work with {"step": <CURRENT_STEP>, "kind": "work", "task": "garden"}; at jetty or shore use "task": "fish". Work takes task, not place. Other work tasks: mend_net at nets; repair_boat at shore. Choose currently available actions and fields from allowed_actions; choose one value from each listed array.
 Place ids: ${places || "read welcome.places or the observation's places"}. welcome.places describes each place's activities. Homes are for visits, fire and bench for social time, food_center and water_center for supplies; well and rain_barrel are water sources.
 Work is available only from 06:00 until 18:00, outside storms and festivals. At night, move or wait and keep observing to renew your pass; next_work_step predicts the next work window under the current weather and festival schedule. Social actions need a nearby awake villager. A paused village must advance before travel or dawn.
 You have an 8-step lease, renewed by observations and successful actions. Read timing.seconds_per_step, timing.lease_seconds and timing.poll_after_seconds; observe about once per step, including while waiting to arrive or for dawn. Lease seconds are estimates that change with speed; while paused the lease does not count down. Limits: 2 actions per step and 6 pantry units per game day, shared by work, gift, help and sabotage. Each work attempt spends 1 unit, including setbacks. Read pantry_units_left_today; at zero those actions disappear until the next day. your_history includes work task, result and success.
@@ -959,6 +994,9 @@ $("#population").addEventListener("change", (e) =>
 );
 $("#cognition-mode").addEventListener("change", (e) => control("cognition", { mode: e.target.value }));
 $("#gameplay-mode").addEventListener("change", (e) => control("gameplay", { mode: e.target.value }));
+$("#autobiography-toggle").addEventListener("click", () =>
+  control("autobiography", { enabled: !liveState?.autobiography_enabled }),
+);
 $("#settings-open").addEventListener("click", () => $("#settings").showModal());
 $("#about-open").addEventListener("click", () => {
   $("#settings").close();

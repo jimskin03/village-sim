@@ -75,6 +75,12 @@ villagers may add their own evidence-backed insights without erasing
 those episodes. Original episodes and repeated chores remain in long-term memory alongside
 those summaries. The painting is graded by hour and map markers show the supplies and repairs.
 
+Villagers also have separate, private autobiographical histories: 24 subjective
+pre-simulation memories, revisable interpretations and latent goals per person.
+They do not appear in the live journal or public replay. New villages include
+the proposed histories; an older save can import them from Settings. See the
+[autobiographical memory guide](docs/autobiographical-memory.md).
+
 **Save this story** downloads replay frames and a resumable checkpoint. Open a
 story to watch it, then choose **Resume this story** to continue its simulation.
 Older recordings without a checkpoint remain replayable. Resuming replaces the
@@ -186,6 +192,7 @@ pantry, daily needs and action limits. Visitors can walk, talk, fish, garden and
 repair boats or nets through the same world rules as residents. Work attempts
 share the existing budget of 6 pantry units per day with gifts, help and sabotage;
 each visitor still gets 2 actions per step and an 8-step renewable lease.
+New visitors sail in and land at the jetty before walking to the guest cottage.
 
 The **Visitors** panel also lets you close the village to them
 (kill switch), revoke every pass or expel one visitor. Enabling visitors or

@@ -13,12 +13,12 @@ import tempfile
 
 from .decisions import Action
 from .cognition.memory import make_memory, validate_memory
-from .cognition import planning, conversations, knowledge, policy
+from .cognition import planning, conversations, knowledge, policy, autobiography
 from .simulation import Agent, PERSONAS, Simulation
 from .world import World
 from . import visitors, survival, work, events, ecology, governance
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
@@ -81,6 +81,8 @@ def _migrate(data):
         raise ValueError("Unsupported session version")
     if data["schema_version"] == SCHEMA_VERSION:
         return data
+    if data["schema_version"] == 10:
+        return _migrate_living(copy.deepcopy(data))
     if data["schema_version"] == 9:
         return _migrate_living(copy.deepcopy(data))
     if data["schema_version"] == 8:
@@ -211,12 +213,15 @@ def _migrate_events(data):
 
 
 def _migrate_living(data):
-    """Schema 10 keeps the legacy season unless a save already chose living."""
+    """Schema 11 preserves existing saves without importing fictional prehistory."""
     state = data["state"]
     state.setdefault("gameplay", "legacy")
     state.setdefault("ecology", ecology.initial())
     state.setdefault("governance", governance.initial())
     state.setdefault("ledger", [])
+    state.setdefault("autobiography_enabled", False)
+    state.setdefault("autobiographies", {})
+    state.setdefault("autobiography_error", None)
     for aid, resident in data["residents"].items():
         resident.setdefault("traits", knowledge.traits_for(aid))
         resident.setdefault("beliefs", [])
@@ -292,7 +297,7 @@ def _validate_plan(record, state, world, personas):
 def _restore(data):
     if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("Unsupported session version")
-    state = data["state"]
+    state = copy.deepcopy(data["state"])
     if not isinstance(state, dict) or not _integer(state.get("seed"), -(2**63)):
         raise ValueError("Invalid world state")
     candidate = Simulation(1, state["seed"])
@@ -310,6 +315,24 @@ def _restore(data):
         raise ValueError("Invalid cognition mode")
     if state.get("gameplay") not in ("legacy", "living"):
         raise ValueError("Invalid gameplay")
+    try:
+        if type(state.get("autobiography_enabled")) is not bool:
+            raise ValueError("Invalid autobiography setting")
+        autobiography.validate_state(state.get("autobiographies"), data["residents"])
+        if state["autobiography_enabled"] and set(state["autobiographies"]) != set(data["residents"]):
+            raise ValueError("An enabled autobiography pack must cover every resident")
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError, RecursionError):
+        state["autobiography_enabled"] = False
+        state["autobiographies"] = {}
+        state["autobiography_error"] = (
+            "Saved life histories were invalid and have been disabled. The rest of the village was restored."
+        )
+    if (state.get("autobiography_error") is not None
+            and (not isinstance(state["autobiography_error"], str)
+                 or len(state["autobiography_error"]) > 500)):
+        state["autobiography_error"] = (
+            "Saved life histories were invalid and have been disabled. The rest of the village was restored."
+        )
     ecology.validate(state["ecology"])
     governance.validate(state["governance"], {persona[0] for persona in PERSONAS})
     ecology.validate_ledger(state["ledger"], state.get("next_event_id", 10**9))
