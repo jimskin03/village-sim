@@ -315,6 +315,7 @@ class Simulation:
                     if self.autobiography_enabled:
                         try:
                             self.autobiographies[aid] = autobiography.seed(aid)
+                            self.residents[aid].traits = autobiography.identity_traits(self.autobiographies[aid])
                         except (OSError, ValueError, TypeError, KeyError):
                             self.autobiographies.clear()
                             self.autobiography_enabled = False
@@ -486,14 +487,20 @@ class Simulation:
             suggested = policy.choose(self, agent, observation)
         else:
             suggested = decide(agent, observation)
-        if (self.autobiography_enabled and suggested.place in ("jetty", "shore", "garden", "west_garden", "orchard")
+        routine = {
+            "fisher": "fishing for the village supper",
+            "gardener": "gathering herbs for the village supper",
+            "boatwright": "checking the village boats",
+        }
+        if (self.autobiography_enabled and suggested.activity == routine.get(agent.role)
+                and suggested.place in ("jetty", "shore", "garden", "west_garden", "orchard", "nets")
                 and (self.gameplay != "living" or not policy.informed(agent))
                 and 6 <= self.minute // 60 < 18 and self.weather != "storm"
                 and self.step >= self.festival_until and min(agent.food, agent.water, agent.health) >= 45):
             work_places = {
                 "fisher": ("jetty", "shore"),
                 "gardener": ("garden", "west_garden", "orchard"),
-                "boatwright": ("shore",),
+                "boatwright": ("shore", "nets"),
             }[agent.role]
             if suggested.place in work_places:
                 suggested = autobiography.bias_work_location(
@@ -810,6 +817,7 @@ class Simulation:
         text = f"{agent.name} {detail}."
         agent.thought = agent.thought or text
         witnesses = []
+        task = None
         if self.gameplay == "living":
             for other in self.agents.values():
                 if other.id != agent.id and abs(other.x - agent.x) + abs(other.y - agent.y) <= knowledge.SEE:
@@ -831,6 +839,14 @@ class Simulation:
         if (self.gameplay == "living" and task and outcome["cause"] != "rule"
                 and result not in ("torn_mesh", "leaking_boat")):
             policy.record_outcome(self, agent, task, place, success, event["id"])
+        # Broken gear and a charter limit do not teach that the place itself failed.
+        if (self.autobiography_enabled and agent.id in self.autobiographies
+                and result not in ("torn_mesh", "leaking_boat")
+                and not (self.gameplay == "living" and (not task or outcome["cause"] == "rule"))):
+            autobiography.note_work(
+                self.autobiographies[agent.id], place=place, success=success,
+                event_id=event["id"], step=self.step,
+            )
         key = f"{self.day}:{agent.id}:{place}"
         summary = self.daily_work.setdefault(key, {"day": self.day, "agent": agent.id, "place": place, "results": {}})
         summary["results"][result] = summary["results"].get(result, 0) + 1

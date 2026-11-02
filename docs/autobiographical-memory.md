@@ -27,15 +27,29 @@ experiences take precedence.
 
 `village_sim/cognition/autobiography.py` validates the authored pack and
 retrieves scenes, interpretations, and latent goals from the current cue text.
-It does not apply simulated-day recency decay. The planning and conversation
-providers receive the selected items beside the existing runtime memories.
-String biography IDs remain separate from numeric live-memory IDs, so a plan
-cannot cite a fictional pre-simulation scene as a journal event.
+A matching recall route also raises scenes on linked routes, scaled by the
+link weight. Retrieval does not apply simulated-day recency decay. The planning
+and conversation providers receive the selected items beside the existing
+runtime memories. String biography IDs remain separate from numeric live-memory
+IDs, so a plan cannot cite a fictional pre-simulation scene as a journal event.
+
+A resident created while histories are enabled takes that history's seven trait
+values. Importing histories into a village that already has those residents
+does not change their traits, trust, beliefs, goals, live memories, or the
+journal. Suggested trust from the history breaks a tie only when lived trust
+and established friendships are equal. Lived trust still wins.
 
 Without a provider, one relevant, evidence-backed facet can break a tie between
-routine work locations. This preference is skipped during storms, festivals,
-urgent survival needs, and after the resident has learned from repeated work
-outcomes. Legal work and its result remain controlled by the simulation.
+routine workplaces: jetty or shore for a fisher, the gardens for a gardener,
+and the shore or net rack for a boatwright. The nudge applies only to the
+ordinary craft activity. It is skipped during storms, festivals, urgent
+survival needs, repair emergencies, and after four recorded outcomes at one of
+those places, in either season. Four poor outcomes at the place a facet
+preferred store a revision on that resident's private copy. The anchor text
+stays as it was written. The facet's alternative becomes the current reading,
+and the revision cites the live work events. Legal work and its result remain
+controlled by the simulation. A history cannot change a catch, a repair, or
+the pantry.
 
 The autobiographical anchors are saved with checkpoints in their own namespace;
 they are never inserted into `Agent.memory` or the event sequence. Existing

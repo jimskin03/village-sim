@@ -115,10 +115,13 @@ def choose_helper(sim, agent, task):
         if _insight_current(sim, agent, memory, allowed):
             return allowed[memory["preferred_helper"]]
 
+    from . import autobiography
+
     def rank(other):
         return (
             agent.trust.get(other.id, 0.0),
             1 if other.id in agent.relationships else 0,
+            autobiography.suggested_trust(sim, agent.id, other.id),
             -list(sim.residents).index(other.id),
         )
 
