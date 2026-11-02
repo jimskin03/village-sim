@@ -7,6 +7,7 @@
 
 const VillageView = {
   ready: false,
+  loading: false,
   manifest: null,
   images: new Map(),
   sim: null,
@@ -43,10 +44,50 @@ VillageView.sync = (state, world) => {
 function loadImage(url) {
   return new Promise((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`Could not load ${url}`));
+    const finish = (error) => {
+      clearTimeout(timer);
+      image.onload = image.onerror = null;
+      if (error) {
+        image.src = "";
+        reject(error);
+      } else resolve(image);
+    };
+    const timer = setTimeout(() => finish(new Error(`Timed out loading ${url}`)), 12000);
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error(`Could not load ${url}`));
     image.src = url;
   });
+}
+
+async function retryArt(load) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await load(attempt);
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+    }
+  }
+}
+
+async function loadArt(manifest) {
+  const files = [...assetFiles(manifest)].filter((file) => !VillageView.images.has(file));
+  const errors = [];
+  let next = 0;
+  // Mobile connections and tunnels can reject a burst of all 196 files.
+  // Keep a small queue, retry transient failures and retain successful files.
+  await Promise.all(Array.from({ length: Math.min(6, files.length) }, async () => {
+    while (next < files.length && !errors.length) {
+      const file = files[next++];
+      try {
+        const image = await retryArt((attempt) => loadImage(`/assets/${file}${attempt ? `?retry=${attempt}` : ""}`));
+        VillageView.images.set(file, image);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  }));
+  if (errors.length) throw errors[0];
 }
 
 function assetFiles(manifest) {
@@ -647,15 +688,27 @@ function frame(now) {
 }
 
 VillageView.start = async () => {
+  if (VillageView.loading || VillageView.ready) return;
+  VillageView.loading = true;
+  const status = document.getElementById("art-status");
+  const message = document.getElementById("art-message");
+  const retry = document.getElementById("art-retry");
+  if (status) status.hidden = false;
+  if (message) message.textContent = "Loading village graphics…";
+  if (retry) retry.hidden = true;
   try {
-    const response = await fetch("/assets/manifest.json");
-    if (!response.ok) return;
-    const manifest = await response.json();
-    const entries = await Promise.all([...assetFiles(manifest)].map(async (file) => {
-      const image = await loadImage(`/assets/${file}`);
-      return [file, image];
-    }));
-    VillageView.images = new Map(entries);
+    const manifest = await retryArt(async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      try {
+        const response = await fetch("/assets/manifest.json", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error(`Could not load village art (${response.status})`);
+        return await response.json();
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+    await loadArt(manifest);
     VillageView.manifest = manifest;
     const terrain = bakeTerrain(manifest);
     VillageView.terrain = [terrain, terrain];
@@ -663,10 +716,16 @@ VillageView.start = async () => {
     document.getElementById("scene")?.classList.add("asset-view");
     document.dispatchEvent(new CustomEvent("village-art"));
     drawWorld(performance.now());
+    if (status) status.hidden = true;
   } catch (error) {
     console.warn(error.message);
+    if (message) message.textContent = "Village graphics couldn’t load. Showing the backup view.";
+    if (retry) retry.hidden = false;
+  } finally {
+    VillageView.loading = false;
   }
 };
 
+document.getElementById("art-retry")?.addEventListener("click", () => VillageView.start());
 requestAnimationFrame(frame);
 VillageView.start();

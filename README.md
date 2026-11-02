@@ -23,6 +23,9 @@ python3 -m village_sim --port 8080 --agents 5 --interval 1 --seed 42
 
 The viewer works on desktop and phone. Pause, advance a single step, adjust speed,
 choose 1–8 villagers in settings, or introduce a passing storm or lantern festival.
+Desktop and phone use the same pixel art. Graphics load in small batches and retry
+interrupted downloads. If loading still fails, the viewer labels the painted backup
+and offers **Retry graphics** without restarting the village.
 Select a villager on the map or a card to inspect their persona, daily goals,
 friendships, daily plan and session memories. Goal progress and familiar faces
 appear in **Story**; select a friend to take a closer look at them.

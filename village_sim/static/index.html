@@ -10,9 +10,9 @@
     />
     <title>Lantern Bay · Village Sim</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/style.css?v=16" />
     <script src="/sound.js" defer></script>
-    <script src="/world-view.js" defer></script>
+    <script src="/world-view.js?v=16" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -181,6 +181,10 @@
             <canvas id="atmosphere" aria-hidden="true"></canvas>
             <div id="villagers"></div>
           </div>
+        </div>
+        <div id="art-status" class="art-status" hidden>
+          <span id="art-message" role="status">Loading village graphics…</span>
+          <button id="art-retry" type="button" hidden>Retry graphics</button>
         </div>
         <div class="map-navigation">
           <span id="map-hint">Drag or scroll to explore</span>
