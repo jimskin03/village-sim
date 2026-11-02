@@ -61,6 +61,8 @@ class ServerTests(unittest.TestCase):
             ("/docs", "text/html"),
             ("/docs/", "text/html"),
             ("/app.js", "javascript"),
+            ("/analytics.js", "javascript"),
+            ("/analytics.css", "text/css"),
             ("/world-view.js", "javascript"),
             ("/assets/manifest.json", "application/json"),
             ("/assets/tiles/grass.png", "image/png"),
@@ -69,6 +71,28 @@ class ServerTests(unittest.TestCase):
             with urlopen(self.base + path, timeout=3) as response:
                 self.assertIn(kind, response.headers["Content-Type"])
                 self.assertGreater(len(response.read()), 100)
+
+    def test_analytics_is_read_only_paginated_and_scoped_to_the_current_story(self):
+        initial = self.request("/api/analytics")
+        self.assertEqual(initial["session_id"], self.request("/api/state")["session_id"])
+        with self.session.condition:
+            for _ in range(90):
+                self.session.sim.event("Mara sorted a net.", "work", ["mara"])
+        data = self.request("/api/analytics?agent=mara&kind=work&search=NET&limit=7")
+        self.assertEqual(data["matching_events"], 90)
+        self.assertEqual(len(data["events"]), 7)
+        self.assertEqual(len(data["residents"]), 3)
+        next_page = self.request(f'/api/analytics?agent=mara&kind=work&before={data["next_before"]}&limit=100')
+        self.assertEqual(len(next_page["events"]), 83)
+        self.assertIsNone(next_page["next_before"])
+        for query in ("limit=0", "limit=101", "limit=no", "before=-1", "before=no", "search=" + "x" * 501):
+            with self.assertRaises(HTTPError) as error:
+                self.request("/api/analytics?" + query)
+            self.assertEqual(error.exception.code, 400)
+        self.request("/api/control", {"action": "reset"})
+        fresh = self.request("/api/analytics")
+        self.assertNotEqual(initial["session_id"], fresh["session_id"])
+        self.assertNotIn("work", fresh["by_kind"])
 
     def test_harness_auth_actions_and_personality_continuity(self):
         join = self.request("/api/agents/mara/join", {"provider": "Test brain"})

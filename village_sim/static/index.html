@@ -11,9 +11,11 @@
     <title>Lantern Bay · Village Sim</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/style.css?v=17" />
+    <link rel="stylesheet" href="/analytics.css" />
     <script src="/sound.js" defer></script>
     <script src="/world-view.js?v=16" defer></script>
-    <script src="/app.js?v=17" defer></script>
+    <script src="/analytics.js" defer></script>
+    <script src="/app.js?v=18" defer></script>
   </head>
   <body>
     <svg class="icon-defs" aria-hidden="true">
@@ -62,6 +64,12 @@
           <path
             d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3Z"
           />
+        </symbol>
+        <symbol id="i-analytics" viewBox="0 0 24 24">
+          <path d="m5 6 7 6 7-7M12 12l7 7M12 12l-8 7" />
+          <circle cx="5" cy="6" r="2" /><circle cx="19" cy="5" r="2" />
+          <circle cx="12" cy="12" r="3" /><circle cx="19" cy="19" r="2" />
+          <circle cx="4" cy="19" r="2" />
         </symbol>
         <symbol id="i-sound" viewBox="0 0 24 24">
           <path d="M4 9v6h4l5 4V5L8 9H4Z" />
@@ -403,6 +411,60 @@
           </section>
         </div>
       </section>
+      <section id="analytics-panel" class="map-panel" aria-labelledby="analytics-title" hidden>
+        <div class="analytics-heading">
+          <div>
+            <p class="eyebrow">LANTERN BAY / SESSION ANALYTICS</p>
+            <h2 id="analytics-title">The village, connected<span>.</span></h2>
+          </div>
+          <div class="analytics-heading-actions">
+            <span id="analytics-mode" class="analytics-live">Live session</span>
+            <button class="icon-button" data-panel-close aria-label="Close analytics"><svg><use href="#i-close" /></svg></button>
+          </div>
+        </div>
+        <div class="analytics-body">
+          <div id="analytics-stats" class="analytics-stats" aria-label="Session totals"></div>
+          <p id="analytics-status" class="analytics-status" role="status">Open a window into this session’s activity.</p>
+          <div class="analytics-workspace">
+            <div class="analytics-map">
+              <div class="analytics-map-heading">
+                <div><h3>A living constellation</h3><p>Every villager. Every thread of the story.</p></div>
+                <span class="analytics-map-mark" aria-hidden="true">✧</span>
+              </div>
+              <div id="analytics-graph" class="analytics-graph">
+                <svg id="analytics-network" viewBox="0 0 1000 660" aria-labelledby="analytics-graph-title analytics-graph-desc">
+                  <title id="analytics-graph-title">Village activity mind map</title>
+                  <desc id="analytics-graph-desc">Select a villager or an event branch to explore its activity. Lines connect villagers to the types of events they participated in. Use the zoom buttons or drag to explore.</desc>
+                  <defs>
+                    <radialGradient id="analytics-glow"><stop stop-color="#8cc6af" stop-opacity=".15"/><stop offset="1" stop-color="#8cc6af" stop-opacity="0"/></radialGradient>
+                  </defs>
+                  <g id="analytics-network-content"></g>
+                </svg>
+              </div>
+              <div class="analytics-map-footer">
+                <div class="analytics-legend"><span><i class="legend-resident"></i>Villagers</span><span><i class="legend-event"></i>Event branches</span></div>
+                <div class="analytics-zoom" aria-label="Mind map controls">
+                  <button id="analytics-zoom-out" aria-label="Zoom out of mind map">−</button>
+                  <button id="analytics-fit" aria-label="Fit mind map">Fit</button>
+                  <button id="analytics-zoom-in" aria-label="Zoom into mind map">+</button>
+                </div>
+              </div>
+              <div id="analytics-selection" class="analytics-selection"></div>
+            </div>
+            <aside class="analytics-timeline" aria-label="Session event explorer">
+              <div class="analytics-timeline-heading"><h3>Session timeline</h3><span id="analytics-event-count"></span></div>
+              <label class="analytics-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id="analytics-search" type="search" maxlength="500" placeholder="Search the story…" aria-label="Search session events" /></label>
+              <div class="analytics-filters">
+                <select id="analytics-agent" aria-label="Filter by villager"><option value="">All villagers</option></select>
+                <select id="analytics-kind" aria-label="Filter by event type"><option value="">All event types</option></select>
+              </div>
+              <div id="analytics-filter-note" class="analytics-filter-note"><span>All session events</span><button id="analytics-clear" hidden>Clear filters ↗</button></div>
+              <div id="analytics-events" class="analytics-events" tabindex="0" aria-label="Events, newest first"></div>
+              <button id="analytics-more" class="analytics-more" hidden>Load earlier events ↓</button>
+            </aside>
+          </div>
+        </div>
+      </section>
       <div id="replay-bar" class="replay-bar" hidden>
         <strong>Recorded village</strong
         ><input
@@ -418,6 +480,9 @@
       </div>
 
       <nav class="village-dock" aria-label="Explore the village">
+        <button data-panel="analytics-panel" aria-controls="analytics-panel" aria-expanded="false">
+          <svg><use href="#i-analytics" /></svg><span>Analytics</span>
+        </button>
         <button
           data-panel="villagers-panel"
           aria-controls="villagers-panel"

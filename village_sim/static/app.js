@@ -62,6 +62,7 @@ function openPanel(id, trigger = document.activeElement) {
     button.setAttribute("aria-expanded", String(button.dataset.panel === id));
   });
   activePanel = id;
+  window.VillageAnalytics?.setVisible(id === "analytics-panel");
   document.body.classList.add("panel-open");
   panelTrigger = trigger;
   panel.querySelector("[data-panel-close]").focus({ preventScroll: true });
@@ -81,6 +82,7 @@ function closePanel() {
     trigger?.focus({ preventScroll: true });
   }
   activePanel = null;
+  window.VillageAnalytics?.setVisible(false);
   panelTrigger = null;
   document.body.classList.remove("panel-open");
 }
@@ -306,6 +308,7 @@ function render(next) {
   renderDetails();
   renderJournal();
   renderVisitors();
+  window.VillageAnalytics?.update(state, { recording, replayIndex, world, connected });
   renderOperatorControls();
   connectionLabel();
   villageSound.follow(state);

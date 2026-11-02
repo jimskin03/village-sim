@@ -38,12 +38,22 @@ swipe to reach the edges when the browser has a different shape. Names
 stay readable while the map changes size, and hovering a villager shows their
 role and activity. **Routine** means daily routines; **Planning** means Hybrid
 with local replies when no AI provider is connected.
-Open **Villagers**, **Journal** or **Events** from the dock when you want more
+Open **Analytics**, **Villagers**, **Journal** or **Events** from the dock when you want more
 detail. Panels dock beside the map on desktop and below it on phones; close one
 or press Escape to return to the full view. Select a villager to open their
 details, or drag, scroll or swipe to explore a zoomed map. The page stays in
 place while panels scroll independently. Running/paused status and the Sound
 on/off button remain labelled. Choose ¼× speed to read at a slower pace.
+
+Open **Analytics** in the dock for a neuron-style map of the whole session.
+Villagers connect to event branches covering work, conversations, plans, world
+events, visitors and everyday life. Select a node to filter the searchable
+timeline, or select an event to highlight its participants. Session totals show
+events, villagers, completed tasks and elapsed village time. The timeline pages
+through the full history, including events older than the journal’s recent view;
+villagers who leave remain part of the session. Zoom or drag the map to explore.
+In recorded stories, analytics follows the selected replay moment. Older stories
+with incomplete event history are labelled accordingly.
 
 When a village requires an operator token, its controls are locked for viewers.
 Choose **Unlock operator controls** in Settings or Visitors and enter the token

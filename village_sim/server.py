@@ -22,6 +22,7 @@ from .cognition.embeddings import EmbeddingCache
 from .cognition import conversations, reflection
 from .simulation import Simulation
 from .persistence import export_session, read_session, restore_session, write_session
+from .analytics import session_analytics
 from .recording import RecordingArchive
 
 STATIC = Path(__file__).parent / "static"
@@ -146,6 +147,7 @@ class Session:
             "paused": self.paused,
             "interval": self.interval,
             "revision": self.revision,
+            "session_id": self.archive.story,
             "autobiography_enabled": self.sim.autobiography_enabled,
             "autobiography_error": self.sim.autobiography_error,
             "brains": {aid: brain.public() for aid, brain in self.brains.items()},
@@ -635,6 +637,26 @@ class Handler(BaseHTTPRequestHandler):
             return {"operator": True}, 200
         if path == "/api/state":
             return self.session.state(), 200
+        if path == "/api/analytics":
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                before = int(query["before"][0]) if "before" in query else None
+                limit = int(query.get("limit", ["40"])[0])
+                if (before is not None and before < 0) or not 1 <= limit <= 100:
+                    raise ValueError
+            except ValueError:
+                return {"error": "Use a nonnegative event cursor and a limit from 1 to 100."}, 400
+            search = query.get("search", [""])[0]
+            if len(search) > 500:
+                return {"error": "Search must be at most 500 characters."}, 400
+            agent = query.get("agent", [None])[0] or None
+            return {
+                **session_analytics(self.session.sim, agent=agent,
+                                    kinds=query.get("kind", []), search=search,
+                                    before=before, limit=limit),
+                "session_id": self.session.archive.story,
+                "revision": self.session.revision,
+            }, 200
         if path == "/api/world":
             return self.session.sim.world.config, 200
         if path == "/api/visitors":
