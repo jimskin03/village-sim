@@ -99,7 +99,8 @@ class VisitorRuleTests(unittest.TestCase):
         summary = visitors.welcome(self.sim)
         self.assertEqual(summary["villagers"], {a.name: a.role for a in self.sim.agents.values()})
         self.assertEqual(summary["clock"], {"minutes_per_step": 15, "steps_per_day": 96,
-                                             "day": self.sim.day, "step": self.sim.step})
+                                             "day": self.sim.day, "step": self.sim.step,
+                                             "minute": self.sim.minute, "time": "08:00"})
         self.assertEqual(summary["pantry"], self.sim.pantry)
         self.assertEqual(summary["daily_need"], {"supper": {"fish": 6, "herbs": 2},
                                                 "food_points": 288, "water_units": 15})
@@ -110,7 +111,7 @@ class VisitorRuleTests(unittest.TestCase):
         self.assertEqual(summary["limits"]["pantry_units_per_day"], visitors.PANTRY_UNITS_PER_DAY)
         self.assertEqual(summary["limits"]["lease_steps"], visitors.LEASE_STEPS)
         self.assertEqual(summary, visitors.observe(self.sim, self.vid)["welcome"])
-        self.assertLessEqual(len(json.dumps(summary)), 1500)
+        self.assertLessEqual(len(json.dumps(summary)), 1800)
         self.sim.set_population(8)
         self.sim.pantry["fish"] = 12
         self.sim.tick()
@@ -118,7 +119,7 @@ class VisitorRuleTests(unittest.TestCase):
         self.assertEqual(len(refreshed["villagers"]), 8)
         self.assertEqual(refreshed["clock"]["step"], self.sim.step)
         self.assertEqual(refreshed["pantry"]["fish"], self.sim.pantry["fish"])
-        self.assertLessEqual(len(json.dumps(refreshed)), 1550)
+        self.assertLessEqual(len(json.dumps(refreshed)), 1850)
         refreshed["pantry"]["fish"] = -1
         self.assertNotEqual(self.sim.pantry["fish"], -1)
 
@@ -150,10 +151,57 @@ class VisitorRuleTests(unittest.TestCase):
                 self.assertEqual(event["provenance"], {"visitor": self.vid, "step": self.sim.step, "kind": "work"})
                 self.assertIn(self.v["name"], event["text"])
                 self.assertEqual(self.sim.visiting["ledger"][-1]["target"], place)
+                history = visitors.observe(self.sim, self.vid)["your_history"][-1]
+                self.assertEqual((history["task"], history["result"], history["success"]),
+                                 (task, result, True))
                 self.assertEqual(self.sim.agents, before)
         self.assertEqual(self.v["units"]["used"], len(cases))
         restored = restore_session(export_session(self.sim))
         self.assertEqual(restored.visiting, self.sim.visiting)
+
+    def test_work_window_hint_handles_night_storm_and_festival(self):
+        for step, expected in ((30, 48), (48, 48), (95, 95), (96, 144)):
+            self.sim.step = step
+            obs = visitors.observe(self.sim, self.vid)
+            self.assertEqual(obs["next_work_step"], expected)
+        self.sim.step = 56
+        self.sim.weather, self.sim.weather_until = "storm", 60
+        self.assertEqual(visitors.next_work_step(self.sim), 60)
+        self.sim.festival_until = 98  # Festival ends at night; wait until dawn.
+        self.assertEqual(visitors.next_work_step(self.sim), 144)
+
+    def test_exhausted_budget_hides_pantry_actions_and_returns_next_day(self):
+        stand(self.sim, self.v, "garden")
+        self.v["units"] = {"day": self.sim.day, "used": 5}
+        gift = next(a for a in visitors.allowed_actions(self.sim, self.v) if a["kind"] == "gift")
+        self.assertEqual(gift["amount"], [1])
+        self.act(kind="work", task="garden")
+        obs = visitors.observe(self.sim, self.vid)
+        self.assertEqual(obs["pantry_units_left_today"], 0)
+        self.assertEqual(obs["limits"]["pantry_units_left_today"], 0)
+        self.assertFalse({"work", "gift", "help", "sabotage"}
+                         & {a["kind"] for a in obs["allowed_actions"]})
+        self.assertIn("move", {a["kind"] for a in obs["allowed_actions"]})
+        self.sim.step += 96
+        obs = visitors.observe(self.sim, self.vid)
+        self.assertEqual(obs["pantry_units_left_today"], 6)
+        self.assertIn("work", {a["kind"] for a in obs["allowed_actions"]})
+
+    def test_work_history_keeps_setbacks_and_accepts_older_saved_rows(self):
+        stand(self.sim, self.v, "jetty")
+        self.sim.pantry["net_condition"] = "torn"
+        self.act(kind="work", task="fish")
+        row = visitors.observe(self.sim, self.vid)["your_history"][-1]
+        self.assertEqual((row["task"], row["result"], row["success"]), ("fish", "torn_mesh", False))
+        row["task"] = "changed"
+        self.assertEqual(self.sim.visiting["ledger"][-1]["task"], "fish")
+        saved = export_session(self.sim)
+        restored = restore_session(saved)
+        self.assertEqual(restored.visiting["ledger"][-1]["result"], "torn_mesh")
+        old_row = restored.visiting["ledger"][-1]
+        for key in ("task", "result", "success"):
+            del old_row[key]
+        restore_session(export_session(restored))  # Existing checkpoints remain readable.
 
     def test_work_rejects_invalid_places_times_weather_and_requested_results(self):
         stand(self.sim, self.v, "guest_home")
@@ -458,6 +506,59 @@ class VisitorServerTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         return body
 
+    def test_live_timing_and_stale_action_recovery(self):
+        self.enable()
+        self.session.interval = 0.5
+        self.session.sim.step = 30  # 01:30, before dawn.
+        reg = self.register()
+        self.assertEqual(reg["timing"]["seconds_per_step"], 0.5)
+        self.assertEqual(reg["timing"]["lease_seconds"], 4)
+        vid, token = reg["visitor_id"], reg["token"]
+        obs = self.call(f"/api/visitors/{vid}/observation", bearer=token)[1]
+        self.assertEqual(obs["welcome"]["clock"]["time"], "01:30")
+        self.assertEqual(obs["next_work_step"], 48)
+        self.assertEqual(obs["timing"]["poll_after_seconds"], 0.5)
+        self.session.sim.step += 1
+        before = copy.deepcopy(self.session.sim.visiting)
+        status, error = self.call(f"/api/visitors/{vid}/act",
+                                  {"step": obs["step"], "kind": "move", "place": "garden"}, bearer=token)
+        self.assertEqual(status, 400)
+        self.assertEqual(error["code"], "stale_action")
+        self.assertEqual(error["current_step"], 31)
+        self.assertEqual(error["observation"]["step"], 31)
+        self.assertEqual(error["observation"]["timing"]["seconds_per_step"], 0.5)
+        self.assertEqual(self.session.sim.visiting, before)  # No spend or lease renewal.
+        status, result = self.call(f"/api/visitors/{vid}/act",
+                                   {"step": error["current_step"], "kind": "move", "place": "garden"}, bearer=token)
+        self.assertEqual((status, result["outcome"]), (200, "accepted"))
+        self.session.paused = True
+        self.session.interval = 4
+        obs = self.call(f"/api/visitors/{vid}/observation", bearer=token)[1]
+        self.assertTrue(obs["timing"]["paused"])
+        self.assertEqual(obs["timing"]["seconds_per_step"], 4)
+        self.assertIsNone(obs["timing"]["lease_seconds"])
+        self.assertIsNone(obs["timing"]["lease_seconds_remaining"])
+
+    def test_work_history_and_budget_visible_over_http(self):
+        self.enable()
+        self.session.sim.step = 48
+        reg = self.register()
+        vid, token = reg["visitor_id"], reg["token"]
+        visitor = self.session.sim.visiting["visitors"][vid]
+        stand(self.session.sim, visitor, "garden")
+        visitor["units"]["used"] = 5
+        status, result = self.call(f"/api/visitors/{vid}/act",
+                                   {"step": 48, "kind": "work", "task": "garden"}, bearer=token)
+        self.assertEqual(status, 200)
+        status, obs = self.call(f"/api/visitors/{vid}/observation", bearer=token)
+        self.assertEqual(status, 200)
+        row = obs["your_history"][-1]
+        self.assertEqual(row["kind"], "work")
+        for field in ("task", "result", "success"):
+            self.assertEqual(row[field], result[field])
+        self.assertEqual(obs["pantry_units_left_today"], 0)
+        self.assertNotIn("work", {a["kind"] for a in obs["allowed_actions"]})
+
     def test_disabled_by_default(self):
         self.assertFalse(Session().visitors_enabled)
         status, body = self.call("/api/visitors/register", {"name": "Wanderer"})
@@ -562,6 +663,30 @@ class VisitorServerTests(unittest.TestCase):
         self.assertEqual(visitor["status"], "left")
         self.assertNotIn(visitor["id"], self.session.visitor_tokens)
         self.assertEqual([r["kind"] for r in self.session.sim.visiting["ledger"]], ["arrive", "move", "left"])
+
+    def test_example_harness_rechooses_from_stale_snapshot(self):
+        self.enable()
+        script = Path(__file__).resolve().parents[1] / "examples" / "visitor_harness.py"
+        original = visitors.act
+        calls = 0
+
+        def drift_once(sim, vid, data):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                sim.tick()  # Clock advances between observing and submitting.
+            return original(sim, vid, data)
+
+        with patch("village_sim.server.visitors.act", side_effect=drift_once):
+            run = subprocess.run([sys.executable, str(script), "--url", self.base,
+                                  "--name", "Quick Wayfarer", "--steps", "1"],
+                                 text=True, capture_output=True, timeout=10)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(calls, 2)
+        self.assertIn("Step 1: move → accepted", run.stdout)
+        self.assertIn("Quick Wayfarer left", run.stdout)
+        self.assertEqual([row["kind"] for row in self.session.sim.visiting["ledger"]],
+                         ["arrive", "move", "left"])
 
     def test_example_harness_joins_with_invite_walks_and_works(self):
         self.session.invite_code = "join-test-invite"

@@ -448,12 +448,17 @@ function renderVisitorSprites(container) {
 }
 function visitorJoinPrompt() {
   const origin = location.origin;
+  const clock = liveState?.time
+    ? `Snapshot when copied: day ${liveState.day}, ${liveState.time}; ${liveState.interval} seconds per step${liveState.paused ? ", paused" : ""}. Refresh timing from registration and each observation.`
+    : "Read welcome.clock for the current day/time and timing for the live seconds per step.";
+  const places = (world?.places || []).map((place) => `${place.id} (${place.name})`).join(", ");
   const invite = liveState?.visitor_invite_required
     ? '\nAn invite code is required. Ask the human for it and add the field "invite" to the registration JSON. The code is not included here.'
     : "";
   return `Visit Lantern Bay, a small fishing village, using HTTP requests from your harness.
 Session URL: ${origin}
 You choose your own goal and may help or harm the village.
+${clock}
 
 Register: POST ${origin}/api/visitors/register
 Content-Type: application/json
@@ -465,8 +470,11 @@ Observe: GET ${origin}/api/visitors/<VISITOR_ID>/observation
 Act: POST ${origin}/api/visitors/<VISITOR_ID>/act
 Leave: POST ${origin}/api/visitors/<VISITOR_ID>/leave with {}
 For these three requests send Authorization: Bearer <VISITOR_TOKEN>. For POST requests also send Content-Type: application/json.
-Fetch an observation first. Act with {"step": <CURRENT_STEP>, "kind": "move", "place": "garden"}, or choose another action and its fields from allowed_actions. Movement takes simulation steps; wait until here is your destination before working. You can move, talk, fish, garden, repair, give gifts, influence villagers or sabotage supplies where the world permits.
-You have an 8-step lease, renewed by observations and successful actions. Poll observations before it expires, including while waiting to arrive. Limits: 2 actions per step and 6 pantry units per day, shared by work, gift, help and sabotage. Read error messages; refresh on stale actions and wait for a later step after a rate limit.
+Fetch an observation first. Move with {"step": <CURRENT_STEP>, "kind": "move", "place": "garden"}. Movement takes simulation steps; wait until here is your destination before working. At the garden, work with {"step": <CURRENT_STEP>, "kind": "work", "task": "garden"}; at jetty or shore use "task": "fish". Work takes task, not place. Other work tasks: mend_net at nets; repair_boat at shore. Choose currently available actions and fields from allowed_actions; choose one value from each listed array.
+Place ids: ${places || "read welcome.places or the observation's places"}. welcome.places describes each place's activities. Homes are for visits, fire and bench for social time, food_center and water_center for supplies; well and rain_barrel are water sources.
+Work is available only from 06:00 until 18:00, outside storms and festivals. At night, move or wait and keep observing to renew your pass; next_work_step predicts the next work window under the current weather and festival schedule. Social actions need a nearby awake villager. A paused village must advance before travel or dawn.
+You have an 8-step lease, renewed by observations and successful actions. Read timing.seconds_per_step, timing.lease_seconds and timing.poll_after_seconds; observe about once per step, including while waiting to arrive or for dawn. Lease seconds are estimates that change with speed; while paused the lease does not count down. Limits: 2 actions per step and 6 pantry units per game day, shared by work, gift, help and sabotage. Each work attempt spends 1 unit, including setbacks. Read pantry_units_left_today; at zero those actions disappear until the next day. your_history includes work task, result and success.
+On a stale_action error, use its current_step and fresh observation to choose again; do not blindly repeat an action whose conditions may have changed. Rejected actions do not renew your lease. After a rate limit wait for a later step, or the next day if the daily budget is exhausted.
 Full docs: ${origin}/docs`;
 }
 

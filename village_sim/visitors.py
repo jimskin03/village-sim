@@ -113,6 +113,10 @@ class Unavailable(Exception):
     """The village is not accepting visitors right now."""
 
 
+class StaleAction(ValueError):
+    """The caller must choose again against the current observation."""
+
+
 def initial_state() -> dict:
     return {"next_id": 1, "visitors": {}, "ledger": [],
             "step_actions": {"step": -1, "count": 0},
@@ -244,11 +248,14 @@ def _prune(sim):
 def _record(sim, visitor, kind, target, outcome, event=None):
     counts = visitor["counts"]
     counts[kind] = counts.get(kind, 0) + 1
-    sim.visiting["ledger"].append({
+    row = {
         "step": sim.step, "day": sim.day, "time": f"{sim.minute // 60:02}:{sim.minute % 60:02}",
         "visitor": visitor["id"], "name": visitor["name"], "kind": kind, "target": target,
         "outcome": outcome, "event_id": event["id"] if event else None,
-    })
+    }
+    if kind == "work" and event:
+        row.update(task=event["task"], result=event["result"], success=event["success"])
+    sim.visiting["ledger"].append(row)
     _prune(sim)
 
 
@@ -323,7 +330,7 @@ def act(sim, vid, data: dict) -> dict:
     if not isinstance(data, dict):
         raise ValueError("Expected a JSON object")
     if type(data.get("step")) is not int or data["step"] != sim.step:
-        raise ValueError("Action is stale; fetch a fresh observation")
+        raise StaleAction("Action is stale; choose again using the returned observation")
     kind = data.get("kind")
     if kind not in KINDS:
         raise ValueError("Choose kind from: " + ", ".join(KINDS))
@@ -488,7 +495,7 @@ def _work_action(sim, visitor, data, prov):
     event = sim.event(text, "visitor_work", (), visitor=visitor["id"], provenance=prov,
                       place=here, task=task, result=outcome["result"], success=outcome["success"])
     _record(sim, visitor, "work", here, "accepted", event)
-    return {"outcome": "accepted", "event_id": event["id"], "result": outcome["result"],
+    return {"outcome": "accepted", "event_id": event["id"], "task": task, "place": here, "result": outcome["result"],
             "success": outcome["success"], "pantry": dict(sim.pantry)}
 
 
@@ -586,7 +593,8 @@ def allowed_actions(sim, visitor) -> list[dict]:
         return actions
     tasks = [task for task, spec in work.TASKS.items()
              if here in spec["places"] and work.options(sim, here, spec["role"])]
-    if tasks:
+    units_left = pantry_units_left(sim, visitor)
+    if tasks and units_left:
         actions.append({"kind": "work", "task": tasks})
     if targets:
         actions += [
@@ -600,16 +608,31 @@ def allowed_actions(sim, visitor) -> list[dict]:
             actions.append({"kind": "spread_rumor", "target": targets, "subject": subjects,
                             "tone": ["warm", "cold"], "text": f"1–{TEXT_LIMIT} characters"})
     resources = [r for r, places in RESOURCE_PLACES.items() if here in places]
-    if resources:
-        actions.append({"kind": "gift", "resource": resources, "amount": [1, 2]})
+    if resources and units_left:
+        actions.append({"kind": "gift", "resource": resources, "amount": list(range(1, min(2, units_left) + 1))})
     tasks = [t for t, place in HELP_TASKS.items() if here == place]
-    if tasks:
+    if tasks and units_left:
         actions.append({"kind": "help", "task": tasks})
     effects = [e for e, places in SABOTAGE.items() if here in places]
-    if effects:
+    if effects and units_left:
         actions.append({"kind": "sabotage", "effect": effects,
                         "amount": "1 or 2 for spoil_fish/spoil_herbs; omit otherwise"})
     return actions
+
+
+def pantry_units_left(sim, visitor):
+    used = visitor["units"]["used"] if visitor["units"]["day"] == sim.day else 0
+    return PANTRY_UNITS_PER_DAY - used
+
+
+def next_work_step(sim):
+    """Next work window under the current clock, storm and festival schedule."""
+    step = max(sim.step, sim.weather_until if sim.weather == "storm" else sim.step,
+               sim.festival_until)
+    minutes = sim.world.config["minutes_per_step"]
+    minute = (sim.total_minutes + (step - sim.step) * minutes) % 1440
+    wait = 360 - minute if minute < 360 else 1800 - minute if minute >= 1080 else 0
+    return step + (wait + minutes - 1) // minutes
 
 
 def welcome(sim) -> dict:
@@ -620,7 +643,8 @@ def welcome(sim) -> dict:
         "villagers": {a.name: a.role for a in sim.agents.values()},
         "clock": {"minutes_per_step": sim.world.config["minutes_per_step"],
                   "steps_per_day": 1440 // sim.world.config["minutes_per_step"],
-                  "day": sim.day, "step": sim.step},
+                  "day": sim.day, "step": sim.step,
+                  "minute": sim.minute, "time": f"{sim.minute // 60:02}:{sim.minute % 60:02}"},
         "places": {pid: "/".join(task for task, spec in work.TASKS.items() if pid in spec["places"])
                    or p["kind"] for pid, p in sim.world.places.items()},
         "pantry": dict(sim.pantry),
@@ -628,7 +652,7 @@ def welcome(sim) -> dict:
                        "food_points": centers["food"]["daily_need"], "water_units": centers["water"]["daily_need"]},
         "actions": {
             "move": "between places",
-            "work": "on site, daylight, no festival; 1 unit/attempt",
+            "work": "task=fish/garden/mend_net/repair_boat; on site, 06:00-18:00, no storm/festival; 1 unit/attempt",
             **{kind: f"awake target within {NEARBY} tiles; " + (
                 f"text <= {TEXT_LIMIT}" if kind in ("speak", "suggest", "spread_rumor") else
                 "legal place" if kind == "nudge_action" else "/".join(MOODS))
@@ -646,7 +670,7 @@ def observe(sim, vid) -> dict:
     visitor = sim.visiting["visitors"][vid]
     own = visitor["step_actions"]
     used = own["count"] if own["step"] == sim.step else 0
-    units = visitor["units"]["used"] if visitor["units"]["day"] == sim.day else 0
+    units_left = pantry_units_left(sim, visitor)
     return {
         "welcome": welcome(sim),
         "step": sim.step, "day": sim.day, "minute": sim.minute,
@@ -667,14 +691,16 @@ def observe(sim, vid) -> dict:
         "visitors": [{k: v[k] for k in ("id", "name", "look", "color", "activity", "x", "y")}
                      for other, v in _active(sim).items() if other != vid],
         "recent_events": memory_view(sim.events[-20:], limit=20, characters=6000),
-        "your_history": [row for row in sim.visiting["ledger"] if row["visitor"] == vid][-20:],
+        "your_history": copy.deepcopy([row for row in sim.visiting["ledger"] if row["visitor"] == vid][-20:]),
         "limits": {
             "lease_until": visitor["lease_until"], "lease_steps": LEASE_STEPS,
             "actions_per_step": ACTIONS_PER_STEP, "actions_left_this_step": ACTIONS_PER_STEP - used,
-            "pantry_units_per_day": PANTRY_UNITS_PER_DAY, "pantry_units_left_today": PANTRY_UNITS_PER_DAY - units,
+            "pantry_units_per_day": PANTRY_UNITS_PER_DAY, "pantry_units_left_today": units_left,
             "text_characters": TEXT_LIMIT, "nearby_tiles": NEARBY,
         },
         "receptivity": {"formula": "50 + 3*trust + openness + need - 15*repeats", "thresholds": THRESHOLDS},
+        "pantry_units_left_today": units_left,
+        "next_work_step": next_work_step(sim),
         "allowed_actions": allowed_actions(sim, visitor),
     }
 
@@ -729,8 +755,14 @@ def validate_state(sim):
     if not isinstance(state["ledger"], list) or len(state["ledger"]) > LEDGER_LIMIT:
         raise ValueError("Invalid visitor ledger")
     for row in state["ledger"]:
+        base_fields = {"step", "day", "time", "visitor", "name", "kind", "target", "outcome", "event_id"}
+        work_fields = {"task", "result", "success"}
         if (not isinstance(row, dict)
-                or set(row) != {"step", "day", "time", "visitor", "name", "kind", "target", "outcome", "event_id"}
+                or set(row) not in (base_fields, base_fields | work_fields)
+                or (set(row) == base_fields | work_fields and (
+                    row["kind"] != "work" or not isinstance(row["task"], str) or row["task"] not in work.TASKS
+                    or not isinstance(row["result"], str) or not 1 <= len(row["result"]) <= 80
+                    or type(row["success"]) is not bool))
                 or type(row["step"]) is not int or row["step"] > sim.step
                 or row["kind"] not in KINDS + ("arrive",) + STATUSES
                 or row["outcome"] not in ("accepted", "resisted", "noted", "declined")):
