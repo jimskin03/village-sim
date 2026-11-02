@@ -12,6 +12,7 @@ const VillageView = {
   sim: null,
   terrain: [null, null],
   ripples: [],
+  coast: [],
   silhouettes: new Map(),
   reduced: matchMedia("(prefers-reduced-motion: reduce)").matches,
 };
@@ -96,6 +97,55 @@ function paintTiles(manifest, mask, names) {
   return canvas;
 }
 
+// Broad, overlapping patches break up the repeating tiles. Bake these once;
+// small grass blades and flowers stay attached to the world during zoom/pan.
+function meadowDetails(manifest, mask) {
+  const canvas = surface(...manifest.map.canvas);
+  const ctx = canvas.getContext("2d");
+  for (let i = 0; i < 240; i++) {
+    const x = noise(i, 42) * canvas.width, y = noise(i, 43) * canvas.height;
+    const radius = 16 + noise(i, 44) * 64;
+    const patch = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    patch.addColorStop(0, i % 3 ? "#94ac5630" : "#234d493d");
+    patch.addColorStop(1, "#54774900");
+    ctx.fillStyle = patch;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+  for (let i = 0; i < 2200; i++) {
+    const x = Math.floor(noise(i, 45) * canvas.width);
+    const y = Math.floor(noise(i, 46) * canvas.height);
+    const cluster = Math.sin(x / 43 + Math.cos(y / 29)) + Math.sin(y / 51);
+    if (cluster < 0.3) continue;
+    ctx.fillStyle = i % 3 ? "#a9b96a66" : "#264f40aa";
+    ctx.fillRect(x, y - 2, 1, 3);
+    ctx.fillRect(x - 2, y - 1, 1, 1);
+    ctx.fillRect(x + 2, y - 3, 1, 2);
+    if (i % 9 === 0) {
+      ctx.fillStyle = ["#e2be7d", "#b4b5cf", "#dfcfaa"][i % 7 % 3];
+      ctx.fillRect(x - 1, y - 4, 2, 2);
+    }
+  }
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.drawImage(mask, 0, 0);
+  return canvas;
+}
+
+function bakeCoast(mask) {
+  const width = mask.width, height = mask.height;
+  const data = mask.getContext("2d").getImageData(0, 0, width, height).data;
+  const land = (x, y) => x >= 0 && y >= 0 && x < width && y < height
+    ? data[(y * width + x) * 4 + 3] / 255 : 0;
+  VillageView.coast = [];
+  for (let y = 3; y < height - 3; y += 3) for (let x = 3; x < width - 3; x += 3) {
+    if (!land(x, y)) continue;
+    const nx = land(x - 2, y) - land(x + 2, y);
+    const ny = land(x, y - 2) - land(x, y + 2);
+    const length = Math.hypot(nx, ny);
+    if (!length) continue;
+    VillageView.coast.push({ x: x * 2, y: y * 2, nx: nx / length, ny: ny / length });
+  }
+}
+
 function bakeTerrain(manifest) {
   const [width, height] = manifest.map.canvas;
   const canvas = surface(width, height);
@@ -134,11 +184,12 @@ function bakeTerrain(manifest) {
     context.drawImage(mask, 0, 0, width, height);
     return full;
   });
+  bakeCoast(masks[0]);
 
   const sea = ctx.createLinearGradient(0, 0, width * 0.3, height);
-  sea.addColorStop(0, "#285e70");
-  sea.addColorStop(0.55, "#1b5064");
-  sea.addColorStop(1, "#123c51");
+  sea.addColorStop(0, "#347d89");
+  sea.addColorStop(0.55, "#205b73");
+  sea.addColorStop(1, "#143e59");
   ctx.fillStyle = sea;
   ctx.fillRect(0, 0, width, height);
   ctx.globalAlpha = 0.22;
@@ -149,11 +200,11 @@ function bakeTerrain(manifest) {
   ctx.globalAlpha = 1;
 
   // A shallow shelf and wet sand give the island a visible waterline.
-  ctx.shadowColor = "#62b5aa";
-  ctx.shadowBlur = 30;
+  ctx.shadowColor = "#62bea9";
+  ctx.shadowBlur = 42;
   ctx.drawImage(fullMasks[0], 0, 0);
-  ctx.shadowColor = "#bad1b2";
-  ctx.shadowBlur = 5;
+  ctx.shadowColor = "#73b9a2";
+  ctx.shadowBlur = 12;
   ctx.drawImage(fullMasks[0], 0, 0);
   ctx.shadowBlur = 0;
   ctx.drawImage(paintTiles(manifest, fullMasks[0], ["sand", "sand_b"]), 0, 0);
@@ -163,7 +214,20 @@ function bakeTerrain(manifest) {
   ctx.drawImage(paintTiles(manifest, fullMasks[1], ["grass", "grass_b", "grass_flower"]), 0, 0);
   ctx.shadowOffsetY = 0;
   ctx.shadowBlur = 0;
+  ctx.drawImage(meadowDetails(manifest, fullMasks[1]), 0, 0);
   ctx.drawImage(paintTiles(manifest, fullMasks[2], ["path", "path_b"]), 0, 0);
+
+  // Scattered flat stones and shells give the beach a sense of scale.
+  for (let i = 0; i < 450; i++) {
+    const x = Math.floor(noise(i, 56) * width), y = Math.floor(noise(i, 57) * height);
+    const tile = terrainAt(Math.floor(x / 32), Math.floor(y / 32));
+    if (!tile.startsWith("sand") && !tile.startsWith("path")) continue;
+    if (noise(i, 58) > 0.5) continue;
+    ctx.fillStyle = "#6d654944";
+    ctx.fillRect(x, y + 1, 4, 2);
+    ctx.fillStyle = tile.startsWith("sand") ? "#ead9aeaa" : "#c4ad7b88";
+    ctx.fillRect(x, y, 3, 1);
+  }
 
   manifest.terrain.forEach((tile, index) => {
     if (tile !== "pier") return;
@@ -294,6 +358,25 @@ function castShadow(ctx, item, image) {
 }
 
 function drawWater(ctx, seconds) {
+  // Slow swash follows the actual land contour, including curved coves.
+  ctx.save();
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  for (let band = 0; band < 2; band++) {
+    for (const point of VillageView.coast) {
+      const tide = (seconds * 0.13 + band / 2 + point.y / 2400) % 1;
+      const distance = 2 + tide * 17;
+      const x = point.x + point.nx * distance, y = point.y + point.ny * distance;
+      if (terrainAt(Math.floor(x / 32), Math.floor(y / 32)) === "pier") continue;
+      const alpha = Math.sin(tide * Math.PI) * 0.24;
+      ctx.strokeStyle = `rgba(210,239,215,${alpha})`;
+      ctx.beginPath();
+      ctx.moveTo(x - point.ny * 3, y + point.nx * 3);
+      ctx.lineTo(x + point.ny * 3, y - point.nx * 3);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
   for (const ripple of VillageView.ripples) {
     const wave = Math.sin(seconds * 0.7 + ripple.phase);
     const x = Math.round(ripple.x + wave * 2), y = Math.round(ripple.y);
@@ -313,6 +396,35 @@ function drawWater(ctx, seconds) {
       || terrainAt(Math.floor(x / 32) - 2, Math.floor(y / 32)) !== "water") continue;
     ctx.fillStyle = night ? "rgba(186,214,224,0.16)" : "rgba(255,236,190,0.20)";
     ctx.fillRect(Math.round(x), y, 22 + noise(i, 25) * 26, 1);
+  }
+}
+
+// Low garden borders and worn doorstep stones connect each house to its path.
+function drawDoorsteps(ctx) {
+  for (const place of VillageView.sim?.places || []) {
+    if (!place.id.endsWith("_home")) continue;
+    const p = ground(place);
+    for (let i = 0; i < 3; i++) {
+      const x = p.x - 5 + (i % 2) * 3, y = p.y + 3 + i * 5;
+      ctx.fillStyle = "#535b4755";
+      ctx.fillRect(x, y + 1, 10, 4);
+      ctx.fillStyle = i % 2 ? "#b5ae8b" : "#c5ba94";
+      ctx.fillRect(x, y, 9, 3);
+      ctx.fillStyle = "#e2d1a477";
+      ctx.fillRect(x + 1, y, 6, 1);
+    }
+    for (const side of [-1, 1]) {
+      ctx.fillStyle = "#536849";
+      ctx.fillRect(p.x + side * 25 - 6, p.y - 1, 13, 5);
+      for (let i = 0; i < 5; i++) {
+        const x = p.x + side * 25 - 5 + i * 3;
+        const y = p.y - 2 - noise(i, place.x) * 4;
+        ctx.fillStyle = "#799657";
+        ctx.fillRect(x, y, 2, 5);
+        ctx.fillStyle = side < 0 ? "#cfaa85" : "#ae9ac1";
+        ctx.fillRect(x, y - 1, 2, 2);
+      }
+    }
   }
 }
 
@@ -395,7 +507,19 @@ function drawLighting(ctx, seconds, lamps) {
   }
   if (sun > 0) {
     ctx.globalCompositeOperation = "screen";
-    ctx.fillStyle = `rgba(255, 244, 214, ${0.10 + sun * 0.34})`;
+    ctx.fillStyle = `rgba(255, 244, 214, ${sun * 0.19})`;
+    ctx.fillRect(0, 0, 1280, 720);
+  }
+  // Directional golden-hour light complements the cool sea without washing
+  // out the shaded sides of buildings or the darker understory.
+  const golden = Math.max(0, 1 - Math.abs(minute - 1050) / 150);
+  if (golden > 0 && VillageView.sim?.weather !== "storm") {
+    ctx.globalCompositeOperation = "soft-light";
+    const sunset = ctx.createLinearGradient(0, 0, 1100, 600);
+    sunset.addColorStop(0, `rgba(255,203,117,${golden * 0.5})`);
+    sunset.addColorStop(0.65, "rgba(231,176,102,0)");
+    sunset.addColorStop(1, `rgba(45,84,118,${golden * 0.25})`);
+    ctx.fillStyle = sunset;
     ctx.fillRect(0, 0, 1280, 720);
   }
   ctx.globalCompositeOperation = "screen";
@@ -458,6 +582,7 @@ function drawWorld(now) {
   const seconds = VillageView.reduced ? 0 : now / 1000;
   ctx.drawImage(VillageView.terrain[0], 0, 0);
   drawWater(ctx, seconds);
+  drawDoorsteps(ctx);
   const manifest = VillageView.manifest;
   const items = [];
   for (const item of manifest.scenery) {

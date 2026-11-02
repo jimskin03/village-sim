@@ -1,7 +1,7 @@
 """Build Lantern Bay's grid art.
 
 One locked style: three-quarter top-down, evening light from the upper left,
-dark outlines, warm plaster and thatch, cool water. West-facing villagers are
+soft outlines, warm plaster, weathered tile roofs and cool water. West-facing villagers are
 mirrors of the east view. Run from the repo root:
 
     python tools/build_assets.py
@@ -155,6 +155,17 @@ class Pix:
             for x in range(cx - rx, cx + rx + 1):
                 if ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1:
                     self.set(x, y, color)
+
+    def polygon(self, points, color):
+        """Fill crisp, connected facets with the same pixel grid as the sprites."""
+        for y in range(min(p[1] for p in points), max(p[1] for p in points) + 1):
+            edges = []
+            for a, b in zip(points, points[1:] + points[:1]):
+                if min(a[1], b[1]) <= y < max(a[1], b[1]):
+                    edges.append(a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1]))
+            edges.sort()
+            for left, right in zip(edges[::2], edges[1::2]):
+                self.hline(round(left), round(right), y, color)
 
     def blit(self, src, dx, dy):
         for y in range(src.h):
@@ -365,6 +376,36 @@ def framed_window(p, x, y, width=8, height=9):
     p.hline(x - 2, x + width + 1, y + height + 1, WOOD_L)
 
 
+def tiled_roof(p, palette):
+    """Broad, staggered tile courses, with a cool shaded return on the right."""
+    base, shade, light = palette
+    p.polygon([(8, 39), (24, 16), (44, 16), (57, 39)], base)
+    p.polygon([(36, 16), (44, 16), (57, 39), (44, 39)], shade)
+    for y in range(19, 39):
+        row = (y - 19) // 5
+        for x in range(9, 57):
+            color = p.get(x, y)
+            if color not in (base, shade):
+                continue
+            if (y - 19) % 5 == 4:
+                p.set(x, y, mix(color, 0.77))
+            elif (x + row * 4) % 8 == 0:
+                p.set(x, y, mix(color, 0.86))
+            elif (y - 19) % 5 == 0 and (x + row * 4) % 8 in (2, 3, 4, 5):
+                p.set(x, y, light if color == base else mix(light, 0.73))
+    p.hline(24, 44, 16, light)
+    p.hline(24, 44, 17, mix(base, 0.88))
+    p.hline(8, 57, 39, mix(shade, 0.7))
+    p.hline(9, 43, 40, (209, 166, 111, 255))
+    p.hline(44, 56, 40, WOOD_D)
+    # A small roof vent gives the silhouette an architectural focal point.
+    p.polygon([(24, 32), (29, 25), (34, 32)], WALL)
+    p.rect(26, 32, 7, 4, WALL)
+    p.rect(28, 30, 3, 5, (65, 72, 66, 255))
+    p.set(28, 31, (222, 202, 151, 255))
+    p.hline(24, 34, 36, shade)
+
+
 def masonry(p, left, right, y, rows=1):
     for row in range(rows):
         p.hline(left, right, y + row * 3, STONE_D)
@@ -388,6 +429,14 @@ def cottage(flowers=False, vines=False, oar=False):
     p.hline(14, 45, 34, TIMBER)
     p.vline(55, 39, 63, TIMBER)
     framed_window(p, 19, 44)
+    shutter = (63, 112, 101, 255) if not oar else (124, 78, 54, 255)
+    p.rect(16, 44, 2, 9, shutter)
+    p.rect(28, 44, 2, 9, shutter)
+    p.vline(16, 44, 52, mix(shutter, 1.3))
+    for y in (46, 49, 52):
+        p.set(28, y, mix(shutter, 0.7))
+    p.rect(49, 46, 4, 6, TIMBER)
+    p.rect(50, 47, 2, 4, (209, 167, 104, 255))
     p.rect(30, 48, 10, 18, DOOR)
     p.rect(30, 47, 10, 2, TIMBER)
     p.vline(33, 50, 65, WOOD)
@@ -400,8 +449,9 @@ def cottage(flowers=False, vines=False, oar=False):
         p.rect(17, 55, 12, 3, WOOD_D)
         p.hline(17, 28, 55, WOOD_L)
         for index, color in enumerate(((220, 86, 104, 255), (240, 200, 90, 255), (230, 120, 170, 255))):
-            p.set(19 + index * 3, 53, color)
-            p.set(18 + index * 3, 54, LEAF)
+            p.hline(18 + index * 3, 20 + index * 3, 54, LEAF)
+            p.rect(19 + index * 3, 52, 2, 2, color)
+            p.set(19 + index * 3, 51, mix(color, 1.14))
     if vines:
         for y in range(40, 62, 3):
             p.set(43, y, LEAF_D)
@@ -410,7 +460,12 @@ def cottage(flowers=False, vines=False, oar=False):
     if oar:
         p.vline(50, 40, 64, WOOD_L)
         p.rect(48, 38, 5, 3, WOOD)
-    thatch(p, 16, 40, 8, 56)
+    roof = ((173, 91, 66, 255), (112, 61, 53, 255), (220, 142, 98, 255))
+    if oar:
+        roof = ((66, 122, 124, 255), (43, 80, 91, 255), (114, 167, 153, 255))
+    elif vines:
+        roof = ((105, 125, 82, 255), (68, 86, 65, 255), (161, 168, 108, 255))
+    tiled_roof(p, roof)
     p.rect(46, 8, 6, 16, STONE_D)
     p.rect(47, 8, 4, 4, STONE_L)
     for y in (14, 19):
@@ -421,6 +476,14 @@ def cottage(flowers=False, vines=False, oar=False):
     p.rect(40, 45, 4, 6, TIMBER)
     p.rect(41, 46, 2, 4, LANTERN)
     p.set(41, 46, FLAME_L)
+    # Ground-level objects visually settle each cottage into the meadow.
+    p.rect(7, 59, 5, 6, (167, 100, 67, 255))
+    p.hline(7, 11, 59, (214, 150, 102, 255))
+    p.ellipse(9, 57, 3, 3, LEAF)
+    p.set(8, 55, LEAF_L)
+    if vines:
+        for x, y in ((43, 45), (44, 51), (43, 57), (43, 60)):
+            p.rect(x, y, 2, 2, (187, 162, 202, 255))
     outline(p)
     return p
 
@@ -434,6 +497,8 @@ def guest_cottage():
     p.vline(37, 34, 57, TIMBER)
     masonry(p, 12, 45, 55)
     framed_window(p, 16, 39, 6, 7)
+    p.rect(13, 39, 2, 7, (69, 112, 104, 255))
+    p.rect(23, 39, 2, 4, (55, 92, 88, 255))
     p.rect(24, 44, 8, 14, DOOR)
     p.vline(26, 46, 57, WOOD)
     p.set(30, 51, LANTERN)
@@ -446,6 +511,9 @@ def guest_cottage():
     p.rect(7, 51, 4, 6, (163, 99, 67, 255))
     p.ellipse(9, 50, 3, 3, LEAF)
     p.set(8, 48, (234, 167, 147, 255))
+    p.rect(36, 40, 7, 4, WOOD_D)
+    p.hline(37, 41, 41, (230, 205, 152, 255))
+    p.vline(39, 37, 39, ROPE)
     outline(p)
     return p
 
@@ -481,12 +549,18 @@ def boats(leaking):
             p.hline(left, right, oy + row, color)
         p.set(bow + 1, oy + 1, WOOD_D)
         p.hline(ox + 3, bow - 4, oy + 2, WOOD_D)
+        p.hline(ox + 3, bow - 5, oy + 4, (55, 107, 112, 255))
+        p.hline(ox + 4, bow - 7, oy + 5, (41, 77, 84, 255))
+        p.set(ox + 4, oy + 1, (231, 193, 130, 255))
+        p.set(bow - 3, oy + 1, (231, 193, 130, 255))
         if with_sail:
             mast = ox + length // 2
             p.vline(mast, oy - 16, oy + 1, WOOD_D)
             for index, span in enumerate(range(3, 15, 2)):
                 p.hline(mast + 1, mast + span, oy - 14 + index, sail)
+                p.set(mast + span, oy - 14 + index, (177, 176, 157, 255))
             p.hline(mast, mast + 12, oy - 1, WOOD)
+            p.hline(mast - 4, mast - 1, oy - 15, (185, 88, 64, 255))
         else:
             p.hline(ox + 6, ox + length - 6, oy - 1, WOOD_L)
             p.vline(ox + 6, oy - 3, oy - 1, WOOD_L)
@@ -531,14 +605,23 @@ def garden():
             p.vline(x, y, y + 4, LEAF_D)
             p.ellipse(x - 1, y, 2, 2, LEAF)
             p.ellipse(x + 2, y - 1, 2, 2, LEAF_L)
+            p.set(x - 2, y - 1, (141, 170, 91, 255))
+            p.hline(x, x + 2, y + 3, LEAF_D)
             if x > 30:
-                p.set(x, y + 1, (166, 151, 188, 255))
+                p.vline(x, y - 4, y - 1, (164, 146, 190, 255))
+                p.set(x - 1, y - 3, (202, 184, 215, 255))
+                p.set(x + 2, y - 2, (166, 151, 188, 255))
     p.rect(4, 12, 52, 3, WOOD)
     p.hline(5, 54, 12, WOOD_L)
     p.rect(4, 36, 52, 3, WOOD)
     p.rect(4, 12, 3, 27, WOOD_D)
     p.rect(52, 12, 3, 27, WOOD_D)
     p.hline(5, 54, 36, WOOD_L)
+    for x in (5, 52):
+        p.rect(x, 9, 3, 6, WOOD)
+        p.hline(x, x + 2, 9, WOOD_L)
+        p.rect(x, 35, 3, 6, WOOD_D)
+        p.hline(x, x + 2, 35, WOOD_L)
     outline(p)
     return p
 
@@ -729,9 +812,10 @@ def tree(variant):
     for x, y in ((15, 44), (14, 43), (23, 47), (24, 46)):
         p.rect(x, y, 3, 3, WOOD_D)
     # Overlapping irregular crowns give each tree a leafy silhouette and volume.
-    dark = (35, 76, 55, 255) if variant else (41, 83, 52, 255)
-    middle = (49, 104, 65, 255) if variant else (60, 111, 61, 255)
-    light = (81, 137, 79, 255) if variant else (99, 145, 78, 255)
+    dark = (34, 76, 65, 255) if variant else (44, 84, 57, 255)
+    middle = (54, 112, 85, 255) if variant else (76, 125, 68, 255)
+    light = (101, 154, 107, 255) if variant else (134, 164, 86, 255)
+    glint = (151, 182, 122, 255) if variant else (179, 190, 109, 255)
     crowns = ((13, 32, 10, 11), (27, 33, 9, 10), (21, 21, 12, 14), (11, 23, 8, 9), (27, 19, 7, 9))
     for x, y, rx, ry in crowns:
         p.ellipse(x, y, rx, ry, dark)
@@ -739,26 +823,31 @@ def tree(variant):
         p.ellipse(x - 1, y - 3, rx - 2, ry - 3, middle)
     for x, y, rx, ry in ((11, 19, 5, 4), (19, 12, 5, 4), (27, 15, 4, 4), (10, 29, 5, 4), (22, 26, 5, 4)):
         p.ellipse(x, y, rx, ry, light)
-    for y in range(8, 42):
-        for x in range(4, 36):
-            color = p.get(x, y)
-            if color in (dark, middle, light) and noise(x, y, variant + 3) % 17 == 0:
-                p.hline(x, x + 1, y, mix(color, 1.12))
-    outline(p, (32, 61, 44, 255))
+    # Leaf clusters follow the crown's planes; isolated noise flattens the form.
+    for x, y in ((8, 18), (17, 10), (23, 12), (28, 14), (8, 27), (17, 25), (24, 24)):
+        p.hline(x, x + 3, y, glint)
+        p.hline(x - 1, x + 1, y + 1, light)
+    for x, y in ((8, 33), (16, 33), (28, 29), (25, 37), (17, 20), (32, 21)):
+        p.hline(x, x + 3, y, dark)
+        p.set(x + 1, y + 1, middle)
+    p.ellipse(15, 60, 3, 2, dark)
+    p.ellipse(25, 61, 3, 2, middle)
+    p.set(13, 59, light)
+    outline(p, (32, 61, 49, 255))
     return p
 
 
 def rocks():
     p = Pix(36, 28)
-    p.ellipse(12, 16, 8, 6, STONE)
-    p.ellipse(22, 18, 10, 6, STONE_D)
-    p.ellipse(16, 14, 5, 3, STONE_L)
-    p.hline(9, 15, 13, (192, 193, 176, 255))
-    p.hline(20, 27, 18, STONE)
-    p.vline(18, 16, 20, STONE_D)
-    p.hline(7, 13, 21, (72, 95, 64, 255))
-    p.set(8, 20, GRASS_L)
-    outline(p)
+    p.polygon([(4, 16), (8, 10), (16, 8), (21, 13), (23, 21), (8, 23)], STONE)
+    p.polygon([(8, 10), (16, 8), (18, 13), (11, 16), (4, 16)], STONE_L)
+    p.polygon([(18, 13), (21, 13), (23, 21), (13, 23), (11, 16)], STONE_D)
+    p.polygon([(16, 20), (22, 14), (28, 15), (32, 20), (29, 24), (19, 24)], (110, 125, 123, 255))
+    p.polygon([(16, 20), (22, 14), (28, 15), (25, 19)], (160, 171, 158, 255))
+    p.hline(7, 13, 21, (72, 101, 69, 255))
+    p.hline(8, 11, 20, (116, 141, 89, 255))
+    p.set(9, 10, (208, 210, 188, 255))
+    outline(p, (53, 68, 65, 255))
     return p
 
 
@@ -771,8 +860,9 @@ def bush():
     p.ellipse(23, 12, 4, 3, LEAF)
     p.ellipse(14, 7, 4, 3, LEAF_L)
     for x, y in ((7, 13), (12, 10), (21, 8), (24, 15), (17, 16)):
-        p.set(x, y, (220, 144, 139, 255))
-        p.set(x + 1, y, (239, 182, 154, 255))
+        p.hline(x - 1, x + 1, y, (220, 144, 139, 255))
+        p.vline(x, y - 1, y + 1, (239, 182, 154, 255))
+        p.set(x, y, (250, 220, 159, 255))
     outline(p, (32, 61, 44, 255))
     return p
 
@@ -780,9 +870,13 @@ def bush():
 def reed():
     p = Pix(16, 32)
     for x, top in ((5, 12), (8, 8), (11, 14)):
-        p.vline(x, top, 26, (70, 120, 78, 255))
-        p.ellipse(x, top, 2, 3, (120, 150, 90, 255))
-    outline(p)
+        p.vline(x, top, 26, (113, 137, 82, 255))
+        p.vline(x + 1, top + 3, 26, (68, 100, 68, 255))
+        p.rect(x, top, 2, 5, (155, 111, 72, 255))
+        p.vline(x, top, top + 3, (201, 165, 102, 255))
+    p.polygon([(7, 26), (2, 18), (4, 19), (8, 25)], (121, 150, 83, 255))
+    p.polygon([(9, 27), (12, 19), (13, 19), (11, 27)], (92, 126, 75, 255))
+    outline(p, (49, 73, 50, 255))
     return p
 
 

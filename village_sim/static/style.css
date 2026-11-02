@@ -6,9 +6,9 @@
   --green: #315d51;
   --gold: #d5a667;
   --panel: #faf8f1;
-  --hud-surface: linear-gradient(155deg, #24413eef, #112c30f5);
-  --hud-edge: #cbb68650;
-  --hud-shadow: 0 8px 28px #061d2940, inset 0 1px #f8e6bb0d;
+  --hud-surface: linear-gradient(145deg, #2d4c46f5, #152e32f5 72%);
+  --hud-edge: #d3ba7e66;
+  --hud-shadow: 0 10px 30px #061d2952, 0 2px 5px #061d2933, inset 0 1px #ffedc51c;
   font-family: Arial, Helvetica, sans-serif;
   color: var(--ink);
   background: var(--paper);
@@ -200,7 +200,7 @@ main {
   content: "";
   position: absolute;
   inset: 65% 0 0;
-  background: linear-gradient(transparent, #092832a8);
+  background: linear-gradient(transparent, #09283280);
   pointer-events: none;
   z-index: 3;
 }
@@ -272,10 +272,10 @@ main {
   width: 36px;
   height: 42px;
   border: 1px solid #d7b77666;
-  background: radial-gradient(ellipse at 50% 38%, #e6ae4930, #e6ae4900 75%);
-  box-shadow: inset 0 1px #ffe2a51a;
+  background: radial-gradient(ellipse at 50% 38%, #e6ae4940, #e6ae4900 80%);
+  box-shadow: inset 0 1px #ffe2a52b, 0 0 16px #e6ae490a;
   border-radius: 10px 10px 5px 5px;
-  color: #f1c78a;
+  color: #ffda97;
 }
 .brand-mark svg {
   width: 26px;
@@ -409,8 +409,9 @@ main {
 }
 .map-navigation > span {
   padding: 9px 11px;
-  background: #112d32d9;
+  background: #112d32ed;
   border-radius: 6px;
+  box-shadow: inset 0 1px #e6d8b512;
   pointer-events: none;
 }
 .map-navigation button,
@@ -428,9 +429,10 @@ main {
 }
 .map-navigation button[aria-pressed="true"],
 .scene-tools button[aria-pressed="true"] {
-  background: linear-gradient(#d0ae6d, #b28d4f);
+  background: linear-gradient(#e6c48a, #b99457);
   border-color: #e7ca8e;
   color: #172c2b;
+  box-shadow: 0 3px 10px #061d2930, inset 0 1px #fff0c652;
 }
 .map-navigation button:hover:not(:disabled),
 .scene-tools button:hover:not(:disabled) {
@@ -523,12 +525,13 @@ main {
 }
 .village-dock button[aria-expanded="true"] {
   color: #fae0a6;
-  background: #b8995b38;
-  box-shadow: inset 0 0 0 1px #cbb27747;
+  background: linear-gradient(#b8995b40, #b8995b20);
+  box-shadow: inset 0 0 0 1px #cbb27760, inset 0 1px #ffe3a41a;
 }
 .village-dock svg {
   width: 20px;
   height: 20px;
+  color: #d7bd8c;
 }
 .map-panel {
   position: fixed;
@@ -539,11 +542,11 @@ main {
   max-width: calc(100vw - 40px);
   display: flex;
   flex-direction: column;
-  border: 1px solid #d7d8c8;
+  border: 1px solid #d9cdb3;
   border-radius: 12px;
-  background: #f5f3eaf7;
+  background: linear-gradient(150deg, #fbf8effc, #f0eee4fc);
   color: var(--ink);
-  box-shadow: 0 16px 70px #071f3755;
+  box-shadow: 0 16px 70px #071f3766, 0 2px 6px #071f3733, inset 0 1px #ffffff;
   z-index: 15;
   overflow: hidden;
 }
@@ -555,7 +558,7 @@ main {
   padding: 19px 18px 16px;
   border-bottom: 1px solid var(--line);
   flex: none;
-  background: #f7f5ec;
+  background: linear-gradient(115deg, #fffaf0, #eeeadd);
 }
 .panel-heading h2 {
   font:
@@ -623,9 +626,9 @@ main {
   background: #e9eee1;
 }
 .resident-card.selected {
-  background: #e8efdf;
+  background: linear-gradient(135deg, #edf2e3, #dde9d9);
   border-color: #7f9a7c;
-  box-shadow: inset 0 -2px #7f9a7c25;
+  box-shadow: inset 0 1px #ffffffaa, 0 2px 5px #315d5112;
 }
 .resident-name {
   font:
@@ -722,7 +725,7 @@ main {
 }
 .tabs button {
   font-size: 12px;
-  color: #829072;
+  color: #667957;
   padding: 13px 0;
   position: relative;
 }
@@ -1071,21 +1074,22 @@ main {
   left: 50%;
   transform: translateX(-50%);
   color: #fff1d5;
-  background: #142e30e8;
+  background: #142e30f5;
   padding: 3px 6px;
   font-size: 12px;
   border: 1px solid #d8d1ad38;
   border-radius: 4px;
-  box-shadow: 0 2px 4px #081c2a30;
+  box-shadow: 0 2px 5px #081c2a55, inset 0 1px #fff1d512;
   white-space: nowrap;
   max-width: clamp(60px, 10vw, 130px);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .sprite.selected .sprite-name {
-  border-color: #e8c37e;
-  color: #f9db9b;
-  background: #3f3d2bef;
+  border-color: #ffe0a2;
+  color: #28352b;
+  background: linear-gradient(#f0d59e, #d6b477);
+  box-shadow: 0 2px 6px #081c2a66, 0 0 12px #f2bb5722;
 }
 .sprite.selected:after {
   content: "";
@@ -1096,7 +1100,7 @@ main {
   height: 8px;
   border: 1px solid #f9d285;
   border-radius: 50%;
-  box-shadow: 0 0 7px #f2bb5766;
+  box-shadow: 0 0 0 2px #18362e66, 0 0 9px #f2bb5777;
 }
 .speech {
   position: absolute;
@@ -1768,18 +1772,18 @@ body:has(#replay-bar:not([hidden])) .toast {
   position: absolute;
   transform: translate(-50%, 12px);
   white-space: nowrap;
-  border: 1px solid #bbc8a94d;
-  border-radius: 4px;
-  background: #183c36df;
+  border: 1px solid #b3c3a869;
+  border-radius: 5px;
+  background: linear-gradient(#254b40f2, #183c36f2);
   color: #f0f1dc;
   padding: 3px 6px;
   font-size: 10px;
   line-height: 1.4;
-  box-shadow: 0 2px 4px #06202c33;
+  box-shadow: 0 2px 5px #06202c4d, inset 0 1px #e7efd812;
 }
 .state-marker.shortage {
   border-color: #dbb57a99;
-  background: #553e2de8;
+  background: linear-gradient(#684c32f5, #4e392bf5);
   color: #ffe6bb;
 }
 .state-marker.shortage::before {
