@@ -2065,6 +2065,36 @@ body:has(#replay-bar:not([hidden])) .scene-viewport.overview { bottom: 190px; }
 }
 
 /* Asset view: the canvas is the village. DOM sprites stay as hit targets. */
+.art-status {
+  position: absolute;
+  top: 190px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 12px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 10px 14px;
+  border: 1px solid var(--hud-edge);
+  border-radius: 8px;
+  background: var(--hud-surface);
+  box-shadow: var(--hud-shadow);
+  color: #f0ead8;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.art-status button {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #e7ca8e;
+  border-radius: 5px;
+  background: #d5b575;
+  color: #172c2b;
+}
 #world {
   position: absolute;
   inset: 0;
