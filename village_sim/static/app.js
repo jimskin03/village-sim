@@ -43,8 +43,14 @@ let operatorUnlocked = false,
 let activePanel = null,
   panelTrigger = null;
 const color = (value) => (/^#[0-9a-f]{6}$/i.test(value) ? value : "#b6c6a2");
-const portrait = (a) =>
-  `<span class="portrait" style="--agent-color:${color(a.color)}" aria-hidden="true"></span>`;
+const portrait = (a) => {
+  const url = window.VillageView?.portrait(a.id);
+  if (url) return `<span class="portrait portrait-art" style="background-image:url('${url}')" aria-hidden="true"></span>`;
+  return `<span class="portrait" style="--agent-color:${color(a.color)}" aria-hidden="true"></span>`;
+};
+document.addEventListener("village-art", () => {
+  if (state) render(state);
+});
 
 function openPanel(id, trigger = document.activeElement) {
   const panel = document.getElementById(id);
@@ -289,6 +295,29 @@ function render(next) {
   renderOperatorControls();
   connectionLabel();
   villageSound.follow(state);
+  syncArt();
+}
+function syncArt() {
+  if (window.VillageView && state && world) VillageView.sync(state, world);
+}
+function trackFacing(el, x, y) {
+  const previousX = el.dataset.gx;
+  const previousY = el.dataset.gy;
+  if (previousX != null && (Number(previousX) !== x || Number(previousY) !== y)) {
+    const dx = x - Number(previousX);
+    const dy = y - Number(previousY);
+    if (dx || dy) el.dataset.dir = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "e" : "w") : (dy > 0 ? "s" : "n");
+  }
+  if (!el.dataset.dir) el.dataset.dir = "s";
+  el.dataset.gx = String(x);
+  el.dataset.gy = String(y);
+}
+function actorAction(person) {
+  const activity = person.activity || "";
+  if (person.collapsed_until > 0 || activity === "collapsed") return "collapsed";
+  if (activity.startsWith("walking") || activity.startsWith("arriving")) return "walk";
+  if (/fish|herb|water|net|boat|gather|mend|repair|collect/.test(activity)) return "carry";
+  return "idle";
 }
 function placePosition(place) {
   return `left:${((place.x + 0.5) * 32 / 1280) * 100}%;top:${((place.y + 0.5) * 32 / 720) * 100}%`;
@@ -333,7 +362,7 @@ function renderStateMarkers() {
   }).join("");
   if (state.visitor) {
     const place = world.places.find((p) => p.id === "guest_home");
-    if (place) container.insertAdjacentHTML("beforeend", `<span class="festival-visitor" style="${placePosition(place)};--agent-color:#dfc99b" role="img" aria-label="${esc(state.visitor.name || "A visitor")} at the guest cottage"><span class="sprite-shadow"></span><span class="sprite-legs"></span><span class="sprite-body"></span><span class="sprite-head"></span></span>`);
+    if (place) container.insertAdjacentHTML("beforeend", `<span class="festival-visitor" data-actor="visitor" data-action="idle" data-dir="s" style="${placePosition(place)};--agent-color:#dfc99b" role="img" aria-label="${esc(state.visitor.name || "A visitor")} at the guest cottage"><span class="sprite-shadow"></span><span class="sprite-legs"></span><span class="sprite-body"></span><span class="sprite-head"></span></span>`);
   }
 }
 function renderSprites() {
@@ -355,6 +384,9 @@ function renderSprites() {
     el.className = `sprite${a.id === selected ? " selected" : ""}${a.activity.startsWith("walking") ? " walking" : ""}${a.collapsed_until ? " collapsed" : ""}`;
     el.style.left = `${(((a.x + 0.5) * 32) / 1280) * 100}%`;
     el.style.top = `${(((a.y + 0.5) * 32) / 720) * 100}%`;
+    el.dataset.actor = a.id;
+    el.dataset.action = actorAction(a);
+    trackFacing(el, a.x, a.y);
     el.style.setProperty("--agent-color", color(a.color));
     el.setAttribute("aria-label", `${a.name}, ${a.activity}. Select villager.`);
     el.setAttribute("aria-pressed", String(a.id === selected));
@@ -404,6 +436,9 @@ function renderVisitorSprites(container) {
     el.className = `sprite visitor-sprite${v.activity.startsWith("walking") ? " walking" : ""}`;
     el.style.left = `${(((v.x + 0.5) * 32) / 1280) * 100}%`;
     el.style.top = `${(((v.y + 0.5) * 32) / 720) * 100}%`;
+    el.dataset.actor = "visitor";
+    el.dataset.action = actorAction(v);
+    trackFacing(el, v.x, v.y);
     el.style.setProperty("--agent-color", v.color);
     el.style.zIndex = 2 + Math.floor(v.y / 4);
     el.querySelector(".sprite-name").textContent = v.name;
@@ -841,6 +876,7 @@ function renderPlaces() {
     )
     .join("");
   $("#place-labels").hidden = !showLabels;
+  syncArt();
 }
 $("#play").addEventListener("click", () => {
   if (recording) {

@@ -558,11 +558,13 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
     def send(self, data, status=200, content_type="application/json; charset=utf-8"):
-        body = (
-            json.dumps(data, ensure_ascii=False).encode()
-            if content_type.startswith("application/json")
-            else data
-        )
+        # File bodies are already encoded. Only API objects become JSON.
+        if isinstance(data, (bytes, bytearray)):
+            body = bytes(data)
+        elif isinstance(data, str):
+            body = data.encode()
+        else:
+            body = json.dumps(data, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))

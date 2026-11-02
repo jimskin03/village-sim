@@ -13,4 +13,4 @@ dependencies = []
 village-sim = "village_sim.__main__:main"
 
 [tool.setuptools.package-data]
-village_sim = ["data/*.json", "static/*"]
+village_sim = ["data/*.json", "static/*", "static/**/*"]

@@ -6,6 +6,9 @@
   --green: #315d51;
   --gold: #d5a667;
   --panel: #faf8f1;
+  --hud-surface: linear-gradient(145deg, #2d4c46f5, #152e32f5 72%);
+  --hud-edge: #d3ba7e66;
+  --hud-shadow: 0 10px 30px #061d2952, 0 2px 5px #061d2933, inset 0 1px #ffedc51c;
   font-family: Arial, Helvetica, sans-serif;
   color: var(--ink);
   background: var(--paper);
@@ -197,7 +200,7 @@ main {
   content: "";
   position: absolute;
   inset: 65% 0 0;
-  background: linear-gradient(transparent, #092832a8);
+  background: linear-gradient(transparent, #09283280);
   pointer-events: none;
   z-index: 3;
 }
@@ -238,9 +241,9 @@ main {
 .hud-controls,
 .village-dock,
 .replay-bar {
-  border: 1px solid #b7c4a847;
-  background: #173236ed;
-  box-shadow: 0 8px 32px #051e2d30;
+  border: 1px solid var(--hud-edge);
+  background: var(--hud-surface);
+  box-shadow: var(--hud-shadow);
   color: #f0ead8;
   border-radius: 12px;
   pointer-events: auto;
@@ -268,9 +271,11 @@ main {
   place-items: center;
   width: 36px;
   height: 42px;
-  border: 1px solid #a6a78055;
+  border: 1px solid #d7b77666;
+  background: radial-gradient(ellipse at 50% 38%, #e6ae4940, #e6ae4900 80%);
+  box-shadow: inset 0 1px #ffe2a52b, 0 0 16px #e6ae490a;
   border-radius: 10px 10px 5px 5px;
-  color: #e7b87a;
+  color: #ffda97;
 }
 .brand-mark svg {
   width: 26px;
@@ -366,7 +371,7 @@ main {
   flex: none;
 }
 .icon-button:hover {
-  background: #a2b39c25;
+  background: #ddc58c20;
 }
 .icon-button svg {
   width: 19px;
@@ -404,14 +409,16 @@ main {
 }
 .map-navigation > span {
   padding: 9px 11px;
-  background: #102a33b8;
+  background: #112d32ed;
   border-radius: 6px;
+  box-shadow: inset 0 1px #e6d8b512;
   pointer-events: none;
 }
 .map-navigation button,
 .scene-tools button {
-  border: 1px solid #c0cebf55;
-  background: #102a33dd;
+  border: 1px solid var(--hud-edge);
+  background: var(--hud-surface);
+  box-shadow: 0 3px 12px #061d292b, inset 0 1px #f8e6bb0d;
   color: #f1e6cf;
   border-radius: 7px;
 }
@@ -422,8 +429,14 @@ main {
 }
 .map-navigation button[aria-pressed="true"],
 .scene-tools button[aria-pressed="true"] {
-  background: #b38b4d;
-  color: white;
+  background: linear-gradient(#e6c48a, #b99457);
+  border-color: #e7ca8e;
+  color: #172c2b;
+  box-shadow: 0 3px 10px #061d2930, inset 0 1px #fff0c652;
+}
+.map-navigation button:hover:not(:disabled),
+.scene-tools button:hover:not(:disabled) {
+  border-color: #e7ca8e;
 }
 .scene-tools {
   position: absolute;
@@ -508,16 +521,17 @@ main {
   font-size: 13px;
 }
 .village-dock button:hover {
-  background: #d5dfc81a;
+  background: #ddc58c1c;
 }
 .village-dock button[aria-expanded="true"] {
   color: #fae0a6;
-  background: #b8995b38;
-  box-shadow: inset 0 0 0 1px #cbb27747;
+  background: linear-gradient(#b8995b40, #b8995b20);
+  box-shadow: inset 0 0 0 1px #cbb27760, inset 0 1px #ffe3a41a;
 }
 .village-dock svg {
   width: 20px;
   height: 20px;
+  color: #d7bd8c;
 }
 .map-panel {
   position: fixed;
@@ -528,11 +542,11 @@ main {
   max-width: calc(100vw - 40px);
   display: flex;
   flex-direction: column;
-  border: 1px solid #d7d8c8;
+  border: 1px solid #d9cdb3;
   border-radius: 12px;
-  background: #f5f3eaf7;
+  background: linear-gradient(150deg, #fbf8effc, #f0eee4fc);
   color: var(--ink);
-  box-shadow: 0 16px 70px #071f3755;
+  box-shadow: 0 16px 70px #071f3766, 0 2px 6px #071f3733, inset 0 1px #ffffff;
   z-index: 15;
   overflow: hidden;
 }
@@ -544,7 +558,7 @@ main {
   padding: 19px 18px 16px;
   border-bottom: 1px solid var(--line);
   flex: none;
-  background: #f7f5ec;
+  background: linear-gradient(115deg, #fffaf0, #eeeadd);
 }
 .panel-heading h2 {
   font:
@@ -612,9 +626,9 @@ main {
   background: #e9eee1;
 }
 .resident-card.selected {
-  background: #e8efdf;
+  background: linear-gradient(135deg, #edf2e3, #dde9d9);
   border-color: #7f9a7c;
-  box-shadow: inset 0 -2px #7f9a7c25;
+  box-shadow: inset 0 1px #ffffffaa, 0 2px 5px #315d5112;
 }
 .resident-name {
   font:
@@ -711,7 +725,7 @@ main {
 }
 .tabs button {
   font-size: 12px;
-  color: #829072;
+  color: #667957;
   padding: 13px 0;
   position: relative;
 }
@@ -1059,20 +1073,23 @@ main {
   bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
-  color: #f9eccb;
-  background: #142e30d9;
+  color: #fff1d5;
+  background: #142e30f5;
   padding: 3px 6px;
   font-size: 12px;
-  border: 1px solid #7d938144;
-  border-radius: 3px;
+  border: 1px solid #d8d1ad38;
+  border-radius: 4px;
+  box-shadow: 0 2px 5px #081c2a55, inset 0 1px #fff1d512;
   white-space: nowrap;
   max-width: clamp(60px, 10vw, 130px);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .sprite.selected .sprite-name {
-  border-color: #e8c37e;
-  color: #f9db9b;
+  border-color: #ffe0a2;
+  color: #28352b;
+  background: linear-gradient(#f0d59e, #d6b477);
+  box-shadow: 0 2px 6px #081c2a66, 0 0 12px #f2bb5722;
 }
 .sprite.selected:after {
   content: "";
@@ -1083,7 +1100,7 @@ main {
   height: 8px;
   border: 1px solid #f9d285;
   border-radius: 50%;
-  box-shadow: 0 0 7px #f2bb5766;
+  box-shadow: 0 0 0 2px #18362e66, 0 0 9px #f2bb5777;
 }
 .speech {
   position: absolute;
@@ -1427,8 +1444,9 @@ dialog .setting-note {
     width: 132px;
     min-width: 114px;
     padding: 10px 12px;
-    background: #173236ed;
-    border: 1px solid #b7c4a847;
+    background: var(--hud-surface);
+    border: 1px solid var(--hud-edge);
+    box-shadow: var(--hud-shadow);
     border-radius: 10px;
     pointer-events: auto;
   }
@@ -1454,8 +1472,9 @@ dialog .setting-note {
     top: 80px;
     right: 12px;
     padding: 2px;
-    border: 1px solid #b7c4a847;
-    background: #173236ed;
+    border: 1px solid var(--hud-edge);
+    background: var(--hud-surface);
+    box-shadow: var(--hud-shadow);
     border-radius: 9px;
     color: #f0ead8;
     pointer-events: auto;
@@ -1753,18 +1772,18 @@ body:has(#replay-bar:not([hidden])) .toast {
   position: absolute;
   transform: translate(-50%, 12px);
   white-space: nowrap;
-  border: 1px solid #a6c3a877;
+  border: 1px solid #b3c3a869;
   border-radius: 5px;
-  background: #173b32e8;
-  color: #e9efd8;
-  padding: 4px 7px;
+  background: linear-gradient(#254b40f2, #183c36f2);
+  color: #f0f1dc;
+  padding: 3px 6px;
   font-size: 10px;
   line-height: 1.4;
-  box-shadow: 0 2px 6px #06202c44;
+  box-shadow: 0 2px 5px #06202c4d, inset 0 1px #e7efd812;
 }
 .state-marker.shortage {
-  border-color: #f0c38c;
-  background: #5f3929ed;
+  border-color: #dbb57a99;
+  background: linear-gradient(#684c32f5, #4e392bf5);
   color: #ffe6bb;
 }
 .state-marker.shortage::before {
@@ -1779,10 +1798,10 @@ body:has(#replay-bar:not([hidden])) .toast {
   left: 50%;
   transform: translateX(-50%);
   white-space: nowrap;
-  background: #1f343ae8;
-  color: #cfdfcf;
-  border: 1px solid #8aa59b55;
-  border-radius: 8px;
+  background: #183237d9;
+  color: #dbe7d6;
+  border: 1px solid #aebda63b;
+  border-radius: 4px;
   padding: 2px 5px;
   font-size: 7px;
 }
@@ -2043,4 +2062,49 @@ body:has(#replay-bar:not([hidden])) .scene-viewport.overview { bottom: 190px; }
 }
 @media (max-width: 1000px) {
   .map-navigation > span { display: none; }
+}
+
+/* Asset view: the canvas is the village. DOM sprites stay as hit targets. */
+#world {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  image-rendering: pixelated;
+  display: none;
+}
+.scene.asset-view #world { display: block; }
+.scene.asset-view #village-painting { display: none; }
+/* The renderer lights sprites and terrain together; the painting retains its CSS light. */
+.scene.asset-view #daylight-wash,
+.scene.asset-view #hearth-light { display: none; }
+.scene.asset-view .sprite,
+.scene.asset-view .festival-visitor {
+  width: calc(100% * 32 / 1280);
+  height: calc(100% * 48 / 720);
+  transform: translate(-50%, -100%);
+  filter: none;
+}
+.scene.asset-view .sprite-body,
+.scene.asset-view .sprite-head,
+.scene.asset-view .sprite-legs,
+.scene.asset-view .sprite-shadow { display: none; }
+.scene.asset-view .sprite-name { bottom: calc(100% + 2px); }
+.scene.asset-view .sprite-message { bottom: calc(100% + 18px); }
+.scene.asset-view .sprite-brain { top: calc(100% + 1px); }
+.scene.asset-view .visitor-tag { bottom: calc(100% + 16px); }
+.scene.asset-view .sprite.selected:after {
+  left: 12%;
+  width: 76%;
+  bottom: 0;
+}
+.portrait-art::before,
+.portrait-art::after { content: none; }
+.portrait-art {
+  background-color: #1c3330;
+  background-repeat: no-repeat;
+  background-size: 240% auto;
+  background-position: center 2%;
+  image-rendering: pixelated;
 }

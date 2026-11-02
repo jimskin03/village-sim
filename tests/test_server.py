@@ -61,6 +61,9 @@ class ServerTests(unittest.TestCase):
             ("/docs", "text/html"),
             ("/docs/", "text/html"),
             ("/app.js", "javascript"),
+            ("/world-view.js", "javascript"),
+            ("/assets/manifest.json", "application/json"),
+            ("/assets/tiles/grass.png", "image/png"),
             ("/village-night-background.jpg", "image/jpeg"),
         ):
             with urlopen(self.base + path, timeout=3) as response:
