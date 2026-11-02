@@ -110,6 +110,10 @@ curl -s "$BASE/api/visitors/visitor-1/act" -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <VISITOR_TOKEN>' \
   -d '{"step":<STEP>,"kind":"work","task":"garden"}'
 
+# At jetty or shore, the equivalent work request uses task fish:
+# {"step":<STEP>,"kind":"work","task":"fish"}
+# Work takes task, not place. Move to a place first, then work when allowed.
+
 # 4. Leave
 curl -s "$BASE/api/visitors/visitor-1/leave" -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <VISITOR_TOKEN>' -d '{}'
@@ -118,23 +122,40 @@ curl -s "$BASE/api/visitors/visitor-1/leave" -H 'Content-Type: application/json'
 A lease lasts 8 simulation steps. Every authenticated observation or action
 that succeeds renews it; a lapsed lease makes the visitor wander off. Observe
 while waiting for travel or the next step. Rejected actions do not renew a lease.
+Registration and every observation include `timing.seconds_per_step` from the
+live speed setting, `timing.poll_after_seconds` (once per step or once per second,
+whichever is sooner), and estimated `timing.lease_seconds` and
+`timing.lease_seconds_remaining`. For example, at 0.5 seconds per step the full
+lease is about 4 seconds. These estimates change with the speed setting and are
+not wall-clock deadlines; steps do not advance while paused, when lease seconds
+are `null`. Keep observing during travel, night and pauses so speed changes are
+noticed. The example harness uses the returned polling cadence.
 Names already used by a villager or current visitor are rejected with a readable
 400 error; comparisons ignore case. Departed visitor names can be used again.
 New names cannot contain periods; existing saved visitor identities are retained.
 
 Both registration and observation include a compact `welcome` object (about
-1,500 characters). It describes the live village, current villagers and roles,
+1,800 characters). It describes the live village, current villagers and roles,
 clock, place purposes, pantry, daily needs, action kinds and limits. The roster
 matches the current population, including six villagers when six are present.
 `daily_need.supper` is the supper table's fish and herb demand;
 `food_points` and `water_units` are the collection centers' full-day survival
 demand. These values are generated from simulation state and rule configuration.
 The summary is refreshed on each observation and contains no credentials.
+`welcome.clock.time` and `welcome.clock.minute` give the current game time.
+`welcome.places` maps every place id to its purpose. Work locations are `jetty`
+or `shore` for `fish`, `garden` for `garden`, `nets` for `mend_net`, and `shore`
+for `repair_boat`. Homes, `fire` and `bench` are useful for visits; `food_center`
+and `water_center` hold supplies, with `well` and `rain_barrel` as water sources.
 
 The observation lists the time, weather, pantry, every villager (with distance,
 whether they are asleep, and `trust_in_you`), places, other visitors, recent
 events, your own ledger rows, your remaining limits, the receptivity formula,
 and `allowed_actions` for where you are standing right now.
+`pantry_units_left_today` is also shown beside `allowed_actions` (and retained in
+`limits`). At zero, work, gift, help and sabotage disappear from the choices
+until the next game day; movement and eligible social actions remain available.
+Gift quantities are limited to the remaining budget.
 
 ## Actions
 
@@ -162,6 +183,10 @@ garden, mend nets at the net rack, or repair boats at the shore. It is available
 from 06:00 up to 18:00, outside storms and festivals. `move` sets a destination;
 the visitor travels on later simulation steps. Use `here` and `allowed_actions`
 to know when work is possible. A torn net prevents catching fish until repaired.
+`next_work_step` predicts the next daylight work window after any current storm
+or festival ends. At 01:30 this is 18 steps away, so renew the 8-step lease by
+observing while you wait. This hint describes the work schedule; you still need
+to arrive at a work location with budget remaining, and new events can change it.
 Results can succeed or fail; the visitor cannot choose a result. Events and
 ledger rows attribute visitor work to that visitor and place, with no resident
 work credit or goal progress.
@@ -179,6 +204,11 @@ extend an active fouling window, and the well remains usable.
 
 Rate-limited requests return HTTP 429. A disabled village returns 403, a bad or
 missing visitor token 401, an unknown visitor 404, and an invalid action 400.
+A stale action remains HTTP 400 and returns `code: "stale_action"`,
+`current_step` and a fresh `observation`, captured together under the simulation
+lock. Choose again using that observation and its step; another GET is not
+needed. This avoids applying an old choice after conditions change. A stale
+response does not apply the action, spend its budget or renew the lease.
 
 ## Receptivity
 
@@ -209,7 +239,10 @@ Every effect is a village event with a `provenance` object
 memories of the residents involved or who witnessed it. `/api/state` includes
 `visiting` (visitors and the last 40 ledger rows), and `GET /api/visitors`
 returns the same public view. Ledger rows record step, time, visitor, kind,
-target and outcome only; the village never labels a visitor or an action as
+target and outcome; new work rows also include `task`, `result` and `success`,
+including setbacks. These rows appear in `your_history` and survive saving and
+restarting; older saved rows without those extra fields remain readable.
+The village never labels a visitor or an action as
 good or bad. Each agent chooses its own goal and may help or harm the village.
 
 ## Prompt safety
@@ -231,7 +264,8 @@ saved. After a restart or a resumed story, visitors who were present are marked
 
 Use the session URL from the copied prompt and a name of your choosing.
 `examples/visitor_harness.py` registers, prints the live welcome summary,
-observes while walking, tries work at the garden and leaves on Ctrl+C. For a
+observes at the suggested cadence while walking, tries work at the garden,
+rechooses once from a stale-action snapshot and leaves on Ctrl+C. For a
 finite run, use `--steps` (the number of distinct steps observed):
 
 ```bash

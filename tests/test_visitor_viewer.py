@@ -56,13 +56,14 @@ const context = vm.createContext({
   location: { origin: 'https://village.example:8443' },
   liveState: {
     visitors_enabled: true, visitor_invite_required: false,
+    day: 2, time: '01:30', interval: 0.5, paused: false,
     operator_token: secrets[0], token: secrets[1], invite: secrets[2],
   },
   state: { agents: [], visiting: { visitors: [{
     id: 'visitor-1', name: "O'Bay-7", look: 'tide', color: '#4fb6d8',
     status: 'active', activity: 'arriving', intent: 'see the bay',
   }], ledger: [] } },
-  recording: null, operatorUnlocked: false, world: { places: [] },
+  recording: null, operatorUnlocked: false, world: { places: [{id:'garden', name:'Kitchen garden'}] },
   document: { querySelector: element, querySelectorAll() { return []; } },
   navigator: { clipboard: { async writeText(text) { copied.push(text); } } },
   sessionStorage: { getItem() { throw Error('Must not read credentials'); } },
@@ -86,6 +87,14 @@ vm.runInContext(
   }
   assert.ok(prompt.includes('{"name": "<CHOOSE A NAME>", "look": "<OPTIONAL>"}'));
   assert.ok(prompt.includes('8-step lease'));
+  assert.ok(prompt.includes('"kind": "work", "task": "garden"'));
+  assert.ok(prompt.includes('garden (Kitchen garden)'));
+  assert.ok(prompt.includes('day 2, 01:30; 0.5 seconds per step'));
+  assert.ok(prompt.includes('06:00 until 18:00'));
+  assert.ok(prompt.includes('next_work_step'));
+  assert.ok(prompt.includes('timing.poll_after_seconds'));
+  assert.ok(prompt.includes('pantry_units_left_today'));
+  assert.ok(prompt.includes('stale_action'));
   assert.ok(prompt.includes('may help or harm'));
   assert.ok(prompt.includes('Authorization: Bearer <VISITOR_TOKEN>'));
   assert.ok(!prompt.includes('"invite"'));

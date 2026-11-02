@@ -192,9 +192,21 @@ class Session:
         self.publish(record=False)
         vid = visitor["id"]
         return {"visitor_id": vid, "token": token, "lease_steps": visitors.LEASE_STEPS,
+                "timing": self.visitor_timing(visitor),
                 "welcome": visitors.welcome(self.sim),
                 "observation_url": f"/api/visitors/{vid}/observation",
                 "act_url": f"/api/visitors/{vid}/act", "leave_url": f"/api/visitors/{vid}/leave"}
+
+    def visitor_timing(self, visitor):
+        return {"seconds_per_step": self.interval, "paused": self.paused,
+                "lease_seconds": None if self.paused else visitors.LEASE_STEPS * self.interval,
+                "lease_seconds_remaining": None if self.paused else
+                    max(0, visitor["lease_until"] - self.sim.step) * self.interval,
+                "poll_after_seconds": min(self.interval, 1.0)}
+
+    def visitor_observation(self, vid):
+        return {**visitors.observe(self.sim, vid),
+                "timing": self.visitor_timing(self.sim.visiting["visitors"][vid])}
 
     def visitor_control(self, data):
         action = data.get("action")
@@ -635,7 +647,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self.session.visitor_ok(vid, self.headers.get("Authorization", "")):
                 return {"error": "A valid visitor bearer token is required"}, 401
             visitors.renew(self.session.sim, vid)
-            return visitors.observe(self.session.sim, vid), 200
+            return self.session.visitor_observation(vid), 200
         if (
             len(parts) == 4
             and parts[:2] == ["api", "agents"]
@@ -780,7 +792,12 @@ class Handler(BaseHTTPRequestHandler):
                         session.visitor_tokens.pop(vid, None)
                         result = {"left": True}
                     else:
-                        result = visitors.act(session.sim, vid, data)
+                        try:
+                            result = visitors.act(session.sim, vid, data)
+                        except visitors.StaleAction as exc:
+                            return self.send({"error": str(exc), "code": "stale_action",
+                                              "current_step": session.sim.step,
+                                              "observation": session.visitor_observation(vid)}, 400)
                         result["for_step"] = session.sim.step
                     session.publish(record=False)
                 else:
