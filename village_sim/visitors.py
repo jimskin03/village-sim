@@ -60,7 +60,8 @@ LOOKS = {
     "dusk": "#a58cf0",
     "pearl": "#f2efe6",
 }
-ENTRY = "guest_home"
+ENTRY = "jetty"
+ARRIVAL_STEPS = 2
 LEASE_STEPS = 8
 MAX_ACTIVE = 8
 MAX_REGISTRATIONS_PER_STEP = 4
@@ -205,13 +206,13 @@ def register(sim, data: dict, *, invite_ok=True) -> dict:
     visitor = {
         "id": vid, "name": name, "look": look, "color": LOOKS[look], "intent": intent,
         "status": "active", "joined_step": sim.step, "ended_step": None,
-        "lease_until": sim.step + LEASE_STEPS, "x": x, "y": y, "destination": ENTRY,
-        "activity": f"arriving at the {_place_name(sim, ENTRY)}",
+        "lease_until": sim.step + LEASE_STEPS, "x": x, "y": y, "destination": "guest_home",
+        "activity": f"arriving by boat at the {_place_name(sim, ENTRY)}",
         "counts": {}, "trust": {}, "units": {"day": sim.day, "used": 0},
         "step_actions": {"step": -1, "count": 0},
     }
     sim.visiting["visitors"][vid] = visitor
-    sim.event(f"{name}, a visitor, arrived by the {_place_name(sim, ENTRY)}.", "visitor", (),
+    sim.event(f"{name}, a visitor, arrived by boat and landed at the {_place_name(sim, ENTRY)}.", "visitor", (),
               visitor=vid, provenance={"visitor": vid, "step": sim.step, "kind": "arrive"})
     _record(sim, visitor, "arrive", None, "accepted")
     _prune(sim)
@@ -264,6 +265,9 @@ def tick(sim, *, day_ended=False):
     for vid, visitor in list(_active(sim).items()):
         if sim.step >= visitor["lease_until"]:
             depart(sim, vid, "expired", "wandered off when their lease ran out")
+            continue
+        if (visitor["activity"].startswith("arriving by boat")
+                and sim.step - visitor["joined_step"] < ARRIVAL_STEPS):
             continue
         goal = sim.world.point(visitor["destination"])
         path = sim.world.path((visitor["x"], visitor["y"]), goal)
@@ -327,6 +331,8 @@ def act(sim, vid, data: dict) -> dict:
     visitor = sim.visiting["visitors"].get(vid)
     if not visitor or visitor["status"] != "active":
         raise PermissionError("This visitor is no longer in the village")
+    if visitor["activity"].startswith("arriving by boat"):
+        raise ValueError("The boat is still landing at the jetty; wait for the next village step")
     if not isinstance(data, dict):
         raise ValueError("Expected a JSON object")
     if type(data.get("step")) is not int or data["step"] != sim.step:
@@ -585,6 +591,8 @@ def _spend_units(visitor, amount):
 
 
 def allowed_actions(sim, visitor) -> list[dict]:
+    if visitor["activity"].startswith("arriving by boat"):
+        return []
     here = _here(sim, visitor)
     reachable = [a for a in sim.agents.values() if _distance(visitor, a) <= NEARBY and not _asleep(a) and not a.collapsed_until]
     targets = [a.id for a in reachable]
@@ -640,6 +648,7 @@ def welcome(sim) -> dict:
     centers = survival.centers(sim)
     return {
         "village": f"{sim.world.config['name']}: a small fishing village. You choose your goal; you may help or harm.",
+        "arrival": "Your boat lands at the jetty, then you walk to the guest cottage. Wait until your arrival activity ends before acting.",
         "villagers": {a.name: a.role for a in sim.agents.values()},
         "clock": {"minutes_per_step": sim.world.config["minutes_per_step"],
                   "steps_per_day": 1440 // sim.world.config["minutes_per_step"],

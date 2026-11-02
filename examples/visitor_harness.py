@@ -118,30 +118,33 @@ def main():
             observation = request(reply["observation_url"])
             if observation["step"] != last_step:
                 last_step = observation["step"]
-                observed_steps += 1
-                for attempt in range(2):
-                    action = choose(observation)
-                    if not action:
-                        break
-                    try:
-                        result = request(reply["act_url"], {"step": observation["step"], **action})
-                        print(f"Step {last_step}: {action['kind']} → {result['outcome']}", flush=True)
-                        break
-                    except HTTPError as error:
-                        with error:
-                            body = json.loads(error.read())
-                        detail = body.get("error", "")
-                        if error.code == 401 or error.code == 403:
-                            print(f"Pass ended: {detail}")
-                            return
-                        if attempt == 0 and body.get("code") == "stale_action" and body.get("observation"):
-                            observation = body["observation"]
-                            if observation["step"] != last_step:
-                                observed_steps += 1
-                                last_step = observation["step"]
-                            continue  # Choose again from the fresh choices, at most once.
-                        print(f"Step {last_step}: {action['kind']} not applied ({error.code}: {detail})")
-                        break
+                arriving = observation["you"]["activity"].startswith("arriving by boat")
+                if not arriving:
+                    observed_steps += 1
+                    for attempt in range(2):
+                        action = choose(observation)
+                        if not action:
+                            break
+                        try:
+                            result = request(reply["act_url"], {"step": observation["step"], **action})
+                            print(f"Step {last_step}: {action['kind']} → {result['outcome']}", flush=True)
+                            break
+                        except HTTPError as error:
+                            with error:
+                                body = json.loads(error.read())
+                            detail = body.get("error", "")
+                            if error.code == 401 or error.code == 403:
+                                print(f"Pass ended: {detail}")
+                                return
+                            if attempt == 0 and body.get("code") == "stale_action" and body.get("observation"):
+                                observation = body["observation"]
+                                if observation["step"] != last_step:
+                                    last_step = observation["step"]
+                                    if not observation["you"]["activity"].startswith("arriving by boat"):
+                                        observed_steps += 1
+                                continue  # Choose again from the fresh choices, at most once.
+                            print(f"Step {last_step}: {action['kind']} not applied ({error.code}: {detail})")
+                            break
                 if args.steps is not None and observed_steps >= args.steps:
                     break
             time.sleep(observation.get("timing", {}).get("poll_after_seconds", 0.3))

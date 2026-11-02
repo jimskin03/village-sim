@@ -118,6 +118,22 @@ class ServerTests(unittest.TestCase):
             self.request("/api/agents/mara/join", {"provider": "Rejoined brain"}),
         )
 
+    def test_autobiography_import_is_private_and_does_not_create_journal_events(self):
+        with self.session.condition:
+            self.session.sim.set_autobiography(False)
+            before_events = list(self.session.sim.events)
+            before_memory = {aid: list(agent.memory) for aid, agent in self.session.sim.residents.items()}
+        imported = self.request("/api/control", {"action": "autobiography", "enabled": True})
+        self.assertTrue(imported["autobiography_enabled"])
+        self.assertEqual(self.session.sim.events, before_events)
+        self.assertEqual({aid: agent.memory for aid, agent in self.session.sim.residents.items()}, before_memory)
+        self.assertNotIn("autobiographies", imported)
+        saved = self.session.checkpoint()
+        self.assertEqual(set(saved["state"]["autobiographies"]), {"mara", "tom", "lin"})
+        with self.assertRaises(HTTPError) as error:
+            self.request("/api/control", {"action": "autobiography", "enabled": "yes"})
+        self.assertEqual(error.exception.code, 400)
+
     def test_harness_can_query_its_own_long_term_memories(self):
         with self.session.condition:
             promise = self.session.sim.event("Mara promised Tom help with the damaged boat.",

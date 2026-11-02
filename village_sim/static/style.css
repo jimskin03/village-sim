@@ -1919,6 +1919,93 @@ body:has(#replay-bar:not([hidden])) .toast {
 .visitor-sprite {
   pointer-events: none;
 }
+.visitor-arrival-boat {
+  position: absolute;
+  width: 52px;
+  height: 34px;
+  margin: -14px 0 0 -24px;
+  pointer-events: none;
+  transform: translate(150px, 5px);
+  animation: visitor-boat-landing 2.4s cubic-bezier(.2,.75,.25,1) forwards;
+  z-index: 3;
+}
+.arrival-hull {
+  position: absolute;
+  left: 5px;
+  top: 21px;
+  width: 40px;
+  height: 9px;
+  background: linear-gradient(#b87947 0 35%, #724d38 36% 100%);
+  border: 1px solid #ead29c;
+  border-radius: 2px 2px 13px 13px;
+  clip-path: polygon(0 0, 100% 0, 82% 100%, 18% 100%);
+}
+.arrival-sail {
+  position: absolute;
+  left: 23px;
+  top: 3px;
+  width: 14px;
+  height: 19px;
+  background: #f3e6c6;
+  border-left: 1px solid #775d43;
+  clip-path: polygon(0 0, 100% 72%, 0 100%);
+}
+.arrival-sail::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 5px;
+  width: 8px;
+  height: 9px;
+  background: var(--agent-color);
+  clip-path: polygon(0 0, 100% 72%, 0 100%);
+}
+.arrival-passenger {
+  position: absolute;
+  left: 12px;
+  top: 16px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e9bb8a;
+  border: 1px solid #614d40;
+  z-index: 1;
+}
+.arrival-passenger::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--agent-color);
+}
+.arrival-wake {
+  position: absolute;
+  left: 3px;
+  top: 31px;
+  width: 42px;
+  height: 2px;
+  border-radius: 50%;
+  background: #c7e7d9aa;
+  box-shadow: 6px 3px 0 -0.5px #c7e7d977;
+  animation: visitor-wake 900ms ease-in-out infinite alternate;
+}
+@keyframes visitor-boat-landing {
+  0% { transform: translate(150px, 7px) rotate(2deg); }
+  72% { transform: translate(4px, -1px) rotate(-1deg); }
+  86% { transform: translate(-3px, 1px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes visitor-wake {
+  from { opacity: .3; transform: scaleX(.8); }
+  to { opacity: .8; transform: scaleX(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .visitor-arrival-boat { animation: none; transform: none; }
+  .arrival-wake { animation: none; }
+}
 .visitor-sprite .sprite-body {
   outline: 2px dashed #f9eccb;
   outline-offset: 1px;

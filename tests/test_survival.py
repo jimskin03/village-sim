@@ -194,6 +194,7 @@ class SurvivalTests(unittest.TestCase):
             sim.submit("mara", {"step": sim.step})
         visitor = visitors.register(sim, {"name": "Guest"})
         visitor["x"], visitor["y"] = mara.x, mara.y
+        visitor["activity"] = "standing beside Mara"
         until = mara.collapsed_until
         with self.assertRaisesRegex(ValueError, "collapsed"):
             visitors.act(sim, visitor["id"], {"step": sim.step, "kind": "nudge_action", "target": "mara", "place": "bench"})
@@ -295,6 +296,7 @@ class SurvivalTests(unittest.TestCase):
         sim.step = 48
         visitor = visitors.register(sim, {"name": "Guest"})
         visitor["x"], visitor["y"] = sim.world.point("water_center")
+        visitor["activity"] = "standing at the water center"
         before = sim.pantry["water"]
         result = visitors.act(sim, visitor["id"], {"step": sim.step, "kind": "gift", "resource": "water", "amount": 2})
         self.assertEqual(sim.pantry["water"], before + 2)
@@ -302,6 +304,7 @@ class SurvivalTests(unittest.TestCase):
         self.assertEqual(event["visitor"], visitor["id"])
         self.assertIn("provenance", event)
         visitor["x"], visitor["y"] = sim.world.point("rain_barrel")
+        visitor["activity"] = "standing at the rain barrel"
         visitors.act(sim, visitor["id"], {"step": sim.step, "kind": "sabotage", "effect": "foul_barrel"})
         self.assertEqual(visitor["units"]["used"], 3)
         self.assertEqual(sim.water_sources["rain_barrel"]["fouled_until"], sim.step + 4)

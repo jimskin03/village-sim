@@ -12,7 +12,7 @@ import random
 from typing import Callable
 
 from .cognition.memory import MemoryStore, memory_view
-from .cognition import planning, conversations, reflection, knowledge, policy
+from .cognition import planning, conversations, reflection, knowledge, policy, autobiography
 from . import visitors, survival, work, events, ecology, governance
 from .decisions import Action, daily_plan, decide
 from .world import World
@@ -151,6 +151,10 @@ class Simulation:
         self.conversations: list[dict] = []
         self.commitments: list[dict] = []
         self._memory_stores: dict[str, MemoryStore] = {}
+        # Proposed pre-simulation recollections stay separate from the live journal.
+        self.autobiography_enabled = True
+        self.autobiographies: dict[str, dict] = {}
+        self.autobiography_error: str | None = None
         self.step = 0
         self.weather = "clear"
         self.weather_until = 0
@@ -266,6 +270,24 @@ class Simulation:
             text = "The village is keeping the legacy season. The well and rain barrel follow the original unbounded rules again."
         self.event(text, "governance", list(self.agents))
 
+    def set_autobiography(self, enabled):
+        """Enable proposed biographies without changing live memories or beliefs."""
+        if type(enabled) is not bool:
+            raise ValueError("Autobiography setting must be true or false")
+        if enabled:
+            try:
+                missing = {aid: autobiography.seed(aid) for aid in self.residents
+                           if aid not in self.autobiographies}
+            except (OSError, ValueError, TypeError, KeyError):
+                self.autobiography_enabled = False
+                self.autobiography_error = (
+                    "Proposed life histories could not be loaded. The village will keep running without them."
+                )
+                return
+            self.autobiographies.update(missing)
+            self.autobiography_error = None
+        self.autobiography_enabled = enabled
+
     def set_population(self, count: int):
         if type(count) is not int or not 1 <= count <= len(PERSONAS):
             raise ValueError("Population must be an integer between 1 and 8")
@@ -290,6 +312,15 @@ class Simulation:
                     self.residents[aid].plan = daily_plan(self.residents[aid])
                     self.residents[aid].traits = knowledge.traits_for(aid)
                     self.residents[aid].skills = policy.initial_skills()
+                    if self.autobiography_enabled:
+                        try:
+                            self.autobiographies[aid] = autobiography.seed(aid)
+                        except (OSError, ValueError, TypeError, KeyError):
+                            self.autobiographies.clear()
+                            self.autobiography_enabled = False
+                            self.autobiography_error = (
+                                "Proposed life histories could not be loaded. The village will keep running without them."
+                            )
                 self.agents[aid] = self.residents[aid]
                 self.event(
                     f"{self.agents[aid].name} joined the village.", "arrival", [aid]
@@ -439,16 +470,35 @@ class Simulation:
                 for a in self.agents.values()
                 if a.id != aid
             ],
-            "relevant_memories": memory_view(relevant),
+            "relevant_memories": memory_view(relevant, characters=4000),
             "recent_memories": memory_view(agent.memory[-12:], characters=3000),
             "memory_query": query,
             "places": self.world.config["places"],
         }
+        weather_cue = "storm weather" if self.weather == "storm" else ""
+        life_query = f"{query} {weather_cue} {agent.mood}"
+        observation["life_history"] = (
+            autobiography.recall(self.autobiographies.get(aid), life_query)
+            if self.autobiography_enabled else None
+        )
         if self.gameplay == "living":
             knowledge.localize(self, agent, observation)
             suggested = policy.choose(self, agent, observation)
         else:
             suggested = decide(agent, observation)
+        if (self.autobiography_enabled and suggested.place in ("jetty", "shore", "garden", "west_garden", "orchard")
+                and (self.gameplay != "living" or not policy.informed(agent))
+                and 6 <= self.minute // 60 < 18 and self.weather != "storm"
+                and self.step >= self.festival_until and min(agent.food, agent.water, agent.health) >= 45):
+            work_places = {
+                "fisher": ("jetty", "shore"),
+                "gardener": ("garden", "west_garden", "orchard"),
+                "boatwright": ("shore",),
+            }[agent.role]
+            if suggested.place in work_places:
+                suggested = autobiography.bias_work_location(
+                    self.autobiographies.get(aid), life_query, suggested, work_places
+                )
         observation["suggested_action"] = asdict(suggested)
         observation["allowed_actions"] = [{"place": suggested.place, "activity": suggested.activity}]
         if self.cognition_mode == "hybrid" or self.gameplay == "living":

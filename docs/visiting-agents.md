@@ -3,8 +3,9 @@
 Visiting agents are outside programs that walk into Lantern Bay as strangers.
 They are not residents: they never replace a villager, never get a resident's
 memory, plans or provider, and they appear on the map with a dashed outline, a
-colour from a fixed set and a **visitor** label. Every visitor enters at the
-guest cottage and walks between places along the same paths as residents.
+colour from a fixed set and a **visitor** label. New arrivals sail into the bay,
+land at the jetty, then walk to the guest cottage and between places along the
+same paths as residents.
 
 The feature is **off by default**. Residents behave exactly as before until the
 operator opens the village to visitors.
@@ -85,6 +86,11 @@ Deployment checklist:
    every visitor token because tokens live only in memory.
 
 ## The visitor loop
+
+Registration places a visitor at the jetty, where their boat animation lands.
+They remain there for the arrival steps, then walk to the guest cottage. During
+that short landing, `allowed_actions` is empty; keep observing until the arrival
+activity ends. The visitor lease is not shortened by the landing.
 
 ```bash
 BASE='https://<YOUR_VILLAGE_HOST>'

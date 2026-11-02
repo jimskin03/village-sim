@@ -146,6 +146,8 @@ class Session:
             "paused": self.paused,
             "interval": self.interval,
             "revision": self.revision,
+            "autobiography_enabled": self.sim.autobiography_enabled,
+            "autobiography_error": self.sim.autobiography_error,
             "brains": {aid: brain.public() for aid, brain in self.brains.items()},
             "visitors_enabled": self.visitors_enabled,
             "visitor_invite_required": self.invite_code is not None,
@@ -907,6 +909,8 @@ class Handler(BaseHTTPRequestHandler):
                 for brain in session.brains.values():
                     brain.action = None
                 session.schedule_brains()
+            elif action == "autobiography":
+                sim.set_autobiography(data.get("enabled"))
             else:
                 raise ValueError("Unknown control action")
             session.publish(record=action in ("step", "population"))

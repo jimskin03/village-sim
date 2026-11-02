@@ -123,6 +123,7 @@ class EventTests(unittest.TestCase):
         victim = next(agent for agent in sim.agents.values() if survival.collapsed(agent))
         visitor = visitors.register(sim, {"name": "Wanderer", "look": "tide"})
         visitor["x"], visitor["y"] = victim.x, victim.y
+        visitor["activity"] = "standing beside a villager"
         with self.assertRaisesRegex(ValueError, "collapsed"):
             visitors.act(sim, visitor["id"], {
                 "step": sim.step, "kind": "speak", "target": victim.id, "text": "Hello",

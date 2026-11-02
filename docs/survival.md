@@ -91,10 +91,10 @@ usable. Repeated sabotage within that window cannot extend its deadline.
 All effects share the existing six-unit daily visitor budget and retain their
 event provenance and ledger entries.
 
-Checkpoint schema 10 persists stats, collapse deadlines, source supplies,
+Checkpoint schema 11 persists stats, collapse deadlines, source supplies,
 temporary fouling, shared water, happiness, and the quiet-rest and pirate
 clocks. It also persists a living season's ecology, charter, resource ledger,
-beliefs, skills and lessons. Schemas 1–9 migrate without changing the input document. Survival
+beliefs, skills, lessons and separate proposed autobiographies. Schemas 1–10 migrate without changing the input document. Survival
 fields are filled in for every resident, including absent ones. A saved map
 that matches the previous coast, or that coast before the collection places,
 is replaced by the current coast. Anyone left on a tile that is no longer

@@ -10,10 +10,10 @@
     />
     <title>Lantern Bay · Village Sim</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/style.css?v=16" />
+    <link rel="stylesheet" href="/style.css?v=17" />
     <script src="/sound.js" defer></script>
     <script src="/world-view.js?v=16" defer></script>
-    <script src="/app.js" defer></script>
+    <script src="/app.js?v=17" defer></script>
   </head>
   <body>
     <svg class="icon-defs" aria-hidden="true">
@@ -493,6 +493,10 @@
         </select>
       </label>
       <p class="setting-note">The living season gives the bay finite fish, gardens and water. People learn from repeated work, remember who told them what, and can vote on rations, water and the harvest. A fresh start keeps the season you chose. The legacy season keeps the original unbounded well.</p>
+      <h3>Villager life histories</h3>
+      <p class="setting-note">These proposed fictional histories add private memories, revisable interpretations and personal goals. They stay separate from the live journal; each villager sees only their own.</p>
+      <p id="autobiography-status" class="setting-note" role="status"></p>
+      <button id="autobiography-toggle" class="secondary-button" data-operator-control>Import proposed histories</button>
       <p id="persistence-status" class="setting-note" role="status"></p>
       <div class="session-tools" aria-label="Recordings and information">
         <button id="export" class="secondary-button">
