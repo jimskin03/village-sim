@@ -58,9 +58,11 @@ dusk spends the supplies, remembers a shortfall, and shapes tomorrow’s goals.
 Storms damage the net, close the jetty, and cost each villager health and food
 as well as some stores. Festivals spend supplies, welcome a visitor to the guest
 cottage, and lift happiness while the lanterns last. A quiet evening ends a storm
-or festival and lets standing villagers rest. A pirate attack brings a boat to
-the jetty, knocks out the nearest villagers, and takes supplies; they collapse
-and recover, and nobody dies. Effect sizes and durations live in
+or festival and lets standing villagers rest. A pirate attack sails a boat in from the eastern sea. It lands at the jetty,
+the crew runs into the village, knocks out the nearest villagers, and takes
+supplies. They collapse and recover, and nobody dies. With village sound on,
+a storm, a festival, a quiet evening, and a pirate attack each play their own
+short theme. Effect sizes and durations live in
 `village_sim/events.py`. Relationships keep the latest shared promise or
 grudge. In Hybrid mode, trust rises in both directions only when both people are
 at the meeting at the same time. A missed meeting lowers trust only for the

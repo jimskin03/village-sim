@@ -87,6 +87,15 @@ class AssetTests(unittest.TestCase):
                 for file in views.values():
                     check(file, person["size"])
             self.assertTrue(pid)
+        raid = self.manifest["raid"]
+        check(raid["boat"]["file"], tuple(raid["boat"]["size"]))
+        self.assertEqual(len(raid["boat"]["anchor"]), 2)
+        for pid, person in raid["crew"].items():
+            self.assertTrue(pid)
+            for action, views in person["actions"].items():
+                self.assertEqual(set(views), set(DIRECTIONS))
+                for file in views.values():
+                    check(file, person["size"])
         self.assertEqual(seen, {path.relative_to(ASSETS).as_posix()
                                 for path in ASSETS.rglob("*.png")})
 
@@ -105,6 +114,10 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(buildings["nets"], {"sound", "torn"})
         self.assertEqual(buildings["well"], {"ready", "empty", "fouled"})
         self.assertEqual(buildings["rain_barrel"], {"ready", "empty", "fouled"})
+        crew = self.manifest["raid"]["crew"]
+        self.assertEqual(set(crew), {"rake", "brin"})
+        for person in crew.values():
+            self.assertEqual(set(person["actions"]), {"idle", "walk", "carry", "strike"})
 
     def test_coast_keeps_open_water_and_a_varied_beach(self):
         width, height = self.world["width"], self.world["height"]

@@ -3329,5 +3329,92 @@
         28
       ]
     }
-  ]
+  ],
+  "raid": {
+    "boat": {
+      "file": "buildings/pirate_boat.png",
+      "size": [
+        96,
+        64
+      ],
+      "anchor": [
+        14,
+        44
+      ]
+    },
+    "crew": {
+      "rake": {
+        "size": [
+          32,
+          48
+        ],
+        "anchor": [
+          16,
+          44
+        ],
+        "actions": {
+          "idle": {
+            "n": "characters/char_rake_idle_n.png",
+            "e": "characters/char_rake_idle_e.png",
+            "s": "characters/char_rake_idle_s.png",
+            "w": "characters/char_rake_idle_w.png"
+          },
+          "walk": {
+            "n": "characters/char_rake_walk_n.png",
+            "e": "characters/char_rake_walk_e.png",
+            "s": "characters/char_rake_walk_s.png",
+            "w": "characters/char_rake_walk_w.png"
+          },
+          "carry": {
+            "n": "characters/char_rake_carry_n.png",
+            "e": "characters/char_rake_carry_e.png",
+            "s": "characters/char_rake_carry_s.png",
+            "w": "characters/char_rake_carry_w.png"
+          },
+          "strike": {
+            "n": "characters/char_rake_strike_n.png",
+            "e": "characters/char_rake_strike_e.png",
+            "s": "characters/char_rake_strike_s.png",
+            "w": "characters/char_rake_strike_w.png"
+          }
+        }
+      },
+      "brin": {
+        "size": [
+          32,
+          48
+        ],
+        "anchor": [
+          16,
+          44
+        ],
+        "actions": {
+          "idle": {
+            "n": "characters/char_brin_idle_n.png",
+            "e": "characters/char_brin_idle_e.png",
+            "s": "characters/char_brin_idle_s.png",
+            "w": "characters/char_brin_idle_w.png"
+          },
+          "walk": {
+            "n": "characters/char_brin_walk_n.png",
+            "e": "characters/char_brin_walk_e.png",
+            "s": "characters/char_brin_walk_s.png",
+            "w": "characters/char_brin_walk_w.png"
+          },
+          "carry": {
+            "n": "characters/char_brin_carry_n.png",
+            "e": "characters/char_brin_carry_e.png",
+            "s": "characters/char_brin_carry_s.png",
+            "w": "characters/char_brin_carry_w.png"
+          },
+          "strike": {
+            "n": "characters/char_brin_strike_n.png",
+            "e": "characters/char_brin_strike_e.png",
+            "s": "characters/char_brin_strike_s.png",
+            "w": "characters/char_brin_strike_w.png"
+          }
+        }
+      }
+    }
+  }
 }
