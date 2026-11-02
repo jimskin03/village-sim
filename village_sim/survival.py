@@ -66,8 +66,13 @@ def centers(sim):
 
 
 def tick(sim):
-    for place, source in sim.water_sources.items():
-        source["supply"] += 3 if place == "rain_barrel" and sim.weather == "storm" else 1
+    if getattr(sim, "gameplay", "legacy") == "living":
+        from . import ecology
+        ecology.replenish(sim)
+    else:
+        # Legacy wells and barrels have no capacity. Living season caps them.
+        for place, source in sim.water_sources.items():
+            source["supply"] += 3 if place == "rain_barrel" and sim.weather == "storm" else 1
     for agent in sim.agents.values():
         recovered = False
         if collapsed(agent) and sim.step >= agent.collapsed_until:
@@ -192,9 +197,16 @@ def execute(sim, agent, place, activity):
     if activity == "collect water":
         source = sim.water_sources[place]
         amount = min(COLLECT_UNITS, source["supply"]) if source["fouled_until"] <= sim.step else 0
+        if getattr(sim, "gameplay", "legacy") == "living":
+            from . import ecology, governance
+            amount = min(amount, governance.collect_cap(sim, agent))
         if amount:
             source["supply"] -= amount
             sim.pantry["water"] += amount
+            if getattr(sim, "gameplay", "legacy") == "living":
+                ecology.transfer(sim, resource="water", quantity=amount, source=place,
+                                 destination="pantry", actor=agent.id, purpose="collect")
+                governance.note_contribution(sim, agent.id, "water", amount)
             text = f"{agent.name} brought {amount} water units from the {sim.world.places[place]['name']} to the water collection center."
         else:
             text = f"{agent.name} is waiting for fresh water at the {sim.world.places[place]['name']}."
@@ -205,6 +217,10 @@ def execute(sim, agent, place, activity):
             return True
         sim.pantry["water"] -= 1
         agent.water = clamp(agent.water + DRINK_WATER)
+        if getattr(sim, "gameplay", "legacy") == "living":
+            from . import ecology
+            ecology.transfer(sim, resource="water", quantity=1, source="pantry",
+                             destination=agent.id, actor=agent.id, purpose="drink")
         text = f"{agent.name} drank fresh water from the water collection center's store."
     else:
         resource = "herbs" if sim.pantry["herbs"] else "fish"
@@ -212,6 +228,10 @@ def execute(sim, agent, place, activity):
             return True
         sim.pantry[resource] -= 1
         agent.food = clamp(agent.food + (HERB_FOOD if resource == "herbs" else FISH_FOOD))
+        if getattr(sim, "gameplay", "legacy") == "living":
+            from . import ecology
+            ecology.transfer(sim, resource=resource, quantity=1, source="pantry",
+                             destination=agent.id, actor=agent.id, purpose="snack")
         text = f"{agent.name} ate a {'herb bundle' if resource == 'herbs' else 'fish ration'} from the food collection center."
     sim.event(text, "survival", [agent.id], place=place)
     return True

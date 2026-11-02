@@ -29,12 +29,26 @@ def options(sim, place, role, *, hungry=False, collapsed=False):
     return []
 
 
-def perform(sim, options, requested=None):
-    """Resolve a legal attempt. Callers own attribution and actor-specific state."""
+def perform(sim, options, requested=None, *, place=None, actor=None, skill=0.0):
+    """Resolve a legal attempt. Callers own attribution and actor-specific state.
+
+    Legacy voice replies may still name a listed result. In the living season the
+    world rolls the outcome; a requested result is ignored.
+    """
     if not options:
         raise ValueError("Work is not available here now")
-    # Useful work is common; failures still have material consequences.
-    result = requested if requested in options else sim.rng.choice(options[:2] * 3 + options[2:])
+    cause = None
+    if getattr(sim, "gameplay", "legacy") == "living":
+        from . import ecology
+        options, abundance, cause = ecology.prepare(sim, place, options)
+        if not options:
+            raise ValueError("Work is not available here now")
+        weights = ecology.success_weights(options, skill=skill, abundance=abundance, care=ecology.care_bonus(sim))
+        result = sim.rng.choices(options, weights=weights, k=1)[0]
+        result, cause = ecology.commit(sim, place, result, actor, cause)
+    else:
+        # Useful work is common; failures still have material consequences.
+        result = requested if requested in options else sim.rng.choice(options[:2] * 3 + options[2:])
     detail, success = {
         "silver_fish": ("caught a silver fish", True),
         "mackerel": ("landed a striped mackerel", True),
@@ -61,5 +75,5 @@ def perform(sim, options, requested=None):
         sim.pantry["boat_condition"] = "leaking"
     elif result in ("sealed_hull", "sound_boat"):
         sim.pantry["boat_condition"] = "sound"
-    return {"result": result, "detail": detail, "success": success,
+    return {"result": result, "detail": detail, "success": success, "cause": cause,
             "significant": result in ("torn_mesh", "leaking_boat", "wilted_seedlings")}

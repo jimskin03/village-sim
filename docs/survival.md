@@ -38,8 +38,10 @@ rain barrel transfers up to six available units into this store. A `drink`
 activity at either source or the center takes one step after arrival and uses
 one unit from the shared store. The well starts with six units and replenishes
 one per step. The barrel starts with six units and replenishes one per step in
-clear weather or three during a storm. Neither source has a maximum stock,
-daily yield cap or midnight reset. Empty sources require a short wait. Seawater
+clear weather or three during a storm. In the default legacy season neither
+source has a maximum stock, daily yield cap or midnight reset. The living
+season caps the well at 12 and the barrel at 8 and fills them from a finite
+aquifer and the rain. Empty sources require a short wait. Seawater
 at the shore or jetty is rejected explicitly.
 
 Every observation and snapshot includes `villager_count`, `present_villagers`,
@@ -89,9 +91,10 @@ usable. Repeated sabotage within that window cannot extend its deadline.
 All effects share the existing six-unit daily visitor budget and retain their
 event provenance and ledger entries.
 
-Checkpoint schema 9 persists stats, collapse deadlines, source supplies,
+Checkpoint schema 10 persists stats, collapse deadlines, source supplies,
 temporary fouling, shared water, happiness, and the quiet-rest and pirate
-clocks. Schemas 1–8 migrate without changing the input document. Survival
+clocks. It also persists a living season's ecology, charter, resource ledger,
+beliefs, skills and lessons. Schemas 1–9 migrate without changing the input document. Survival
 fields are filled in for every resident, including absent ones. A saved map
 that matches the previous coast, or that coast before the collection places,
 is replaced by the current coast. Anyone left on a tile that is no longer

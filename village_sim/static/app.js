@@ -269,6 +269,8 @@ function render(next) {
   $("#population").value = state.agents.length;
   $("#cognition-mode").value = state.cognition_mode || "rules";
   $("#cognition-mode").disabled = Boolean(recording);
+  $("#gameplay-mode").value = state.gameplay || "legacy";
+  $("#gameplay-mode").disabled = Boolean(recording);
   if (!recording) $("#speed").value = state.interval;
   $("#play").innerHTML = icon(
     (recording ? !replayPlaying : state.paused) ? "play" : "pause",
@@ -634,6 +636,18 @@ function renderRelationships(agent) {
     })
     .join("")}</div>`;
 }
+function renderKnowledge(agent) {
+  if (state.gameplay !== "living") return "";
+  const beliefs = [...(agent.beliefs || [])].reverse().slice(0, 6);
+  const lessons = (agent.lessons || []).filter((lesson) => !lesson.retired).slice(-3);
+  const skills = Object.entries(agent.skills || {});
+  const beliefText = beliefs.length
+    ? beliefs.map((belief) => `<p>${esc(String(belief.subject).replaceAll(":", " "))} · ${esc(belief.value)} · ${esc(belief.provenance)}${belief.source ? ` · from ${esc(belief.source)}` : ""}</p>`).join("")
+    : '<p class="empty-note">Nothing confirmed up close yet.</p>';
+  const lessonText = lessons.map((lesson) => `<p>${esc(lesson.text)}</p>`).join("");
+  const skillText = skills.map(([name, skill]) => `${esc(name)} ${Number(skill.level).toFixed(2)}`).join(" · ");
+  return `<p class="detail-label">WHAT ${esc(agent.name).toUpperCase()} BELIEVES</p>${beliefText}${lessonText ? `<p class="detail-label">LESSONS</p>${lessonText}` : ""}${skillText ? `<p class="detail-label">SKILLS</p><p>${skillText}</p>` : ""}`;
+}
 function renderDetails() {
   const a = state.agents.find((a) => a.id === selected);
   if (!a) return;
@@ -648,7 +662,7 @@ function renderDetails() {
   if (tab === "story") {
     const destination =
       world?.places.find((p) => p.id === a.destination)?.name || a.destination;
-    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}${a.mood ? ` · ${esc(a.mood)}` : ""}</p>${a.thought ? `<p class="agent-thought">${esc(a.thought)}</p>` : ""}<p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${survivalBars(a)}${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory_count ?? a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
+    detail.innerHTML = `<p class="agent-bio">${esc(a.persona)}</p><p class="detail-label">RIGHT NOW</p><p class="current-activity">${esc(a.activity)}${a.mood ? ` · ${esc(a.mood)}` : ""}</p>${a.thought ? `<p class="agent-thought">${esc(a.thought)}</p>` : ""}<p class="detail-label">HEADING TO</p><p class="current-activity">${esc(destination)}</p>${survivalBars(a)}${renderKnowledge(a)}${renderGoals(a)}${renderRelationships(a)}<div class="detail-stats"><span><strong>${a.memory_count ?? a.memory.length}</strong> memories</span><span><strong>${Object.keys(a.relationships).length}</strong> connections</span><span><strong>${a.work_count}</strong> tasks</span></div>`;
     detail.querySelectorAll("[data-friend]").forEach((button) =>
       button.addEventListener("click", () => selectAgent(button.dataset.friend)),
     );
@@ -858,6 +872,25 @@ function journalEntries(events) {
     return true;
   });
 }
+function renderCharter() {
+  const slot = $("#charter");
+  if (!slot) return;
+  if (state.gameplay !== "living" || !state.governance) {
+    slot.innerHTML = "";
+    return;
+  }
+  const open = Boolean(slot.querySelector("details[open]"));
+  const rules = Object.entries(state.governance.rules || {}).map(([domain, rule]) =>
+    `<p>${esc(domain)} · ${esc(rule.rule)}${rule.limit != null ? ` · limit ${esc(rule.limit)}` : ""}</p>`).join("");
+  const polls = (state.governance.proposals || []).filter((proposal) => proposal.status === "open")
+    .map((proposal) => `<p>${esc(proposal.author)} proposed ${esc(proposal.rule)} ${esc(proposal.domain)}: ${esc(proposal.reason)}</p>`).join("");
+  let stocks = "";
+  if (state.ecology?.fish) {
+    const fish = Object.entries(state.ecology.fish).map(([place, ground]) => `${place} ${ground.stock}/${ground.capacity}`).join(", ");
+    stocks = `<p>Fish ${esc(fish)}. Aquifer ${esc(state.ecology.aquifer)}.</p>`;
+  }
+  slot.innerHTML = `<details class="supper-history"${open ? " open" : ""}><summary>Village charter</summary><p class="journal-subtitle">Agreements in force. A private belief is not a village rule.</p>${rules}${polls}${stocks}</details>`;
+}
 function renderJournal() {
   const journal = $("#journal"), scroll = journal.scrollTop;
   const choresOpen = Boolean(journal.querySelector(".chore-log[open]"));
@@ -866,6 +899,7 @@ function renderJournal() {
   $("#reflections").innerHTML = [...reflections].reverse().map((e) =>
     `<article class="pinned-reflection"><small>✧ MIDNIGHT · DAY ${esc(e.reflected_day ?? e.day)}</small><p>${storyText(e.text)}</p></article>`,
   ).join("") || '<p class="empty-note">At midnight, the village keeps one line from today.</p>';
+  renderCharter();
   const lastSupper = state.suppers?.at(-1);
   $("#supper-ledger").innerHTML = lastSupper
     ? `<details class="supper-history"${supperOpen ? " open" : ""}><summary>Supper ledger · Day ${esc(lastSupper.day)}</summary>${[...state.suppers].reverse().map((supper) => `<p>${esc(supper.text || supper.summary || `Day ${supper.day}: ${supper.fish ?? supper.fish_spent ?? 0} fish, ${supper.herbs ?? supper.herbs_spent ?? 0} herbs`)}</p>`).join("")}</details>`
@@ -924,6 +958,7 @@ $("#population").addEventListener("change", (e) =>
   control("population", { count: Number(e.target.value) }),
 );
 $("#cognition-mode").addEventListener("change", (e) => control("cognition", { mode: e.target.value }));
+$("#gameplay-mode").addEventListener("change", (e) => control("gameplay", { mode: e.target.value }));
 $("#settings-open").addEventListener("click", () => $("#settings").showModal());
 $("#about-open").addEventListener("click", () => {
   $("#settings").close();

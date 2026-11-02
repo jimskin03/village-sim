@@ -20,6 +20,7 @@ _IMPORTANCE = {
     "collapse": 1.0, "recovery": 0.9, "survival": 0.65,
     "work_summary": 0.5, "arrival": 0.4, "work": 0.3, "activity": 0.15,
     "visitor_witness": 0.75, "visitor_influence": 0.7, "visitor_speech": 0.6,
+    "report": 0.55, "lesson": 0.6, "governance": 0.7, "grievance": 0.6,
 }
 _STOPWORDS = frozenset(
     "a an and are as at be by for from has have i in is it of on or that the "
@@ -46,7 +47,7 @@ def make_memory(event: dict, *, importance: float | None = None,
     record.update(
         content=event["text"],
         timestamp=event["timestamp"],
-        type="semantic" if event["kind"] in ("reflection", "work_summary", "insight", "trust") else "episodic",
+        type="semantic" if event["kind"] in ("reflection", "work_summary", "insight", "trust", "lesson") else "episodic",
         importance=_IMPORTANCE.get(event["kind"], 0.4) if importance is None else importance,
         source_ids=list(event.get("source_ids", [])),
         embedding=copy.deepcopy(embedding),

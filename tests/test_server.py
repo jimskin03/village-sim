@@ -164,6 +164,26 @@ class ServerTests(unittest.TestCase):
         state = self.request("/api/control", {"action": "reset"})
         self.assertEqual(state["cognition_mode"], "hybrid")
 
+    def test_gameplay_control_survives_reset(self):
+        state = self.request("/api/control", {"action": "gameplay", "mode": "living"})
+        self.assertEqual(state["gameplay"], "living")
+        self.assertLessEqual(state["water_sources"]["well"]["supply"], 12)
+        self.assertIn("fish", state["ecology"])
+        self.assertIn("rules", state["governance"])
+        with self.assertRaises(HTTPError) as error:
+            self.request("/api/control", {"action": "gameplay", "mode": "mythic"})
+        self.assertEqual(error.exception.code, 400)
+        state = self.request("/api/control", {"action": "reset"})
+        self.assertEqual(state["gameplay"], "living")
+        self.assertEqual(state["cognition_mode"], "rules")
+        with urlopen(self.base + "/", timeout=3) as response:
+            page = response.read().decode()
+        self.assertIn('id="gameplay-mode"', page)
+        with urlopen(self.base + "/app.js", timeout=3) as response:
+            script = response.read().decode()
+        self.assertIn("Village charter", script)
+        self.assertIn("WHAT ", script)
+
     def test_stream_sends_immediate_json_snapshot(self):
         with urlopen(self.base + "/api/stream", timeout=3) as stream:
             self.assertEqual(stream.headers["Content-Type"], "text/event-stream")

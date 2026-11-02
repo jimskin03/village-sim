@@ -98,7 +98,8 @@ class Brain:
 
 class Session:
     def __init__(self, count=3, seed=7, interval=2.0, state_path=None, cognition_mode="rules", *,
-                 visitors_enabled=False, operator_token=None, invite_code=None, public_bind=False):
+                 gameplay="legacy", visitors_enabled=False, operator_token=None, invite_code=None,
+                 public_bind=False):
         self.condition = Condition()
         if operator_token is not None and (not isinstance(operator_token, str) or len(operator_token) < 16
                                            or any(c.isspace() for c in operator_token)):
@@ -115,7 +116,8 @@ class Session:
         self.visitor_tokens: dict[str, str] = {}
         self.state_path = Path(state_path) if state_path else None
         saved = read_session(self.state_path) if self.state_path and self.state_path.exists() else None
-        self.sim = restore_session(saved) if saved is not None else Simulation(count, seed, cognition_mode=cognition_mode)
+        self.sim = restore_session(saved) if saved is not None else Simulation(
+            count, seed, cognition_mode=cognition_mode, gameplay=gameplay)
         settings = saved.get("settings", {}) if saved else {}
         self.interval = settings.get("interval", interval)
         if type(self.interval) not in (int, float) or self.interval <= 0:
@@ -890,10 +892,18 @@ class Handler(BaseHTTPRequestHandler):
                 }
             elif action == "reset":
                 paused = session.paused
-                session.resume(export_session(Simulation(len(sim.agents), sim.seed, cognition_mode=sim.cognition_mode)))
+                session.resume(export_session(Simulation(
+                    len(sim.agents), sim.seed,
+                    cognition_mode=sim.cognition_mode, gameplay=sim.gameplay,
+                )))
                 session.paused = paused
             elif action == "cognition":
                 sim.set_cognition_mode(data.get("mode"))
+                for brain in session.brains.values():
+                    brain.action = None
+                session.schedule_brains()
+            elif action == "gameplay":
+                sim.set_gameplay(data.get("mode"))
                 for brain in session.brains.values():
                     brain.action = None
                 session.schedule_brains()
@@ -970,10 +980,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host="127.0.0.1", port=8000, count=3, seed=7, interval=2.0, state_path=None, cognition_mode="rules",
-          visitors_enabled=False):
+          visitors_enabled=False, gameplay="legacy"):
     token = os.environ.get(OPERATOR_ENV) or None
     invite = os.environ.get(INVITE_ENV) or None
-    session = Session(count, seed, interval, state_path, cognition_mode=cognition_mode,
+    session = Session(count, seed, interval, state_path, cognition_mode=cognition_mode, gameplay=gameplay,
                       visitors_enabled=visitors_enabled, operator_token=token, invite_code=invite,
                       public_bind=not _loopback(_split_host(host)[0] or host))
     server = Server((host, port), session)

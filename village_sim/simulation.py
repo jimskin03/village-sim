@@ -12,8 +12,8 @@ import random
 from typing import Callable
 
 from .cognition.memory import MemoryStore, memory_view
-from .cognition import planning, conversations, reflection
-from . import visitors, survival, work, events
+from .cognition import planning, conversations, reflection, knowledge, policy
+from . import visitors, survival, work, events, ecology, governance
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -124,18 +124,30 @@ class Agent:
     happiness: int = 60
     happiness_bonus: int = 0
     happiness_bonus_until: int = 0
+    traits: dict = field(default_factory=dict)
+    beliefs: list = field(default_factory=list)
+    skills: dict = field(default_factory=policy.initial_skills)
+    estimates: dict = field(default_factory=dict)
+    lessons: list = field(default_factory=list)
 
 
 class Simulation:
     def __init__(self, count: int = 3, seed: int = 7, decision: Callable = decide,
-                 cognition_mode: str = "rules"):
+                 cognition_mode: str = "rules", gameplay: str = "legacy", scarcity: str = "calm"):
         if cognition_mode not in planning.MODES:
             raise ValueError("Choose rules or hybrid cognition")
+        if gameplay not in ("legacy", "living"):
+            raise ValueError("Choose legacy or living gameplay")
+        if scarcity not in ("calm", "harsh"):
+            raise ValueError("Choose calm or harsh scarcity")
+        if scarcity == "harsh" and gameplay != "living":
+            raise ValueError("Harsh scarcity is part of the living season")
         self.world = World()
         self.seed = seed
         self.rng = random.Random(seed)
         self.decision = decision
         self.cognition_mode = cognition_mode
+        self.gameplay = gameplay
         self.conversations: list[dict] = []
         self.commitments: list[dict] = []
         self._memory_stores: dict[str, MemoryStore] = {}
@@ -153,6 +165,11 @@ class Simulation:
         self.pantry = {"fish": 0, "herbs": 0, "water": 3 * count, "boat_condition": "sound",
                        "net_condition": "sound", "hearth_lit": True}
         self.water_sources = survival.initial_sources()
+        self.ecology = ecology.initial(scarcity)
+        self.governance = governance.initial()
+        self.ledger = []
+        if scarcity == "harsh":
+            ecology.apply_harsh(self)
         self.suppers: list[dict] = []
         self.reflections: list[dict] = []
         self.visitor: dict | None = None
@@ -235,6 +252,20 @@ class Simulation:
             if agent.cognitive_plan and agent.cognitive_plan["status"] == "active":
                 agent.cognitive_plan.update(status="invalidated", reason="mode_changed", updated_step=self.step)
 
+    def set_gameplay(self, mode):
+        """Switch season without discarding the people. Existing saves stay legacy until asked."""
+        if mode not in ("legacy", "living"):
+            raise ValueError("Choose legacy or living gameplay")
+        if mode == self.gameplay:
+            return
+        self.gameplay = mode
+        if mode == "living":
+            ecology.clamp_sources(self)
+            text = "The village is keeping the living season. Stocks, beliefs and agreements now shape the days ahead."
+        else:
+            text = "The village is keeping the legacy season. The well and rain barrel follow the original unbounded rules again."
+        self.event(text, "governance", list(self.agents))
+
     def set_population(self, count: int):
         if type(count) is not int or not 1 <= count <= len(PERSONAS):
             raise ValueError("Population must be an integer between 1 and 8")
@@ -257,6 +288,8 @@ class Simulation:
                     x, y = self.world.point(persona[3])
                     self.residents[aid] = Agent(*persona, x=x, y=y)
                     self.residents[aid].plan = daily_plan(self.residents[aid])
+                    self.residents[aid].traits = knowledge.traits_for(aid)
+                    self.residents[aid].skills = policy.initial_skills()
                 self.agents[aid] = self.residents[aid]
                 self.event(
                     f"{self.agents[aid].name} joined the village.", "arrival", [aid]
@@ -298,6 +331,10 @@ class Simulation:
                 title = self.last_miss[agent.role]
                 if agent.role == "fisher":
                     place = "shore"
+            if self.gameplay == "living":
+                learned = policy.preferred_work(self, agent, place)
+                if learned is not None:
+                    place, title = learned["place"], learned["title"]
             agent.goals = [
                 {
                     "id": "work",
@@ -382,7 +419,9 @@ class Simulation:
             "last_supper": copy.deepcopy(self.suppers[-1]) if self.suppers else None,
             "agent": self.agent_view(agent),
             "cognition_mode": self.cognition_mode,
-            "decision_contract": planning.CONTRACT if self.cognition_mode == "hybrid" else "voice-v1",
+            "gameplay": self.gameplay,
+            "decision_contract": ("attempt-v1" if self.gameplay == "living"
+                                  else planning.CONTRACT if self.cognition_mode == "hybrid" else "voice-v1"),
             "cognitive_revision": agent.cognitive_revision,
             "replan_reason": agent.replan_reason,
             "conversation": conversations.context(self, aid),
@@ -405,17 +444,27 @@ class Simulation:
             "memory_query": query,
             "places": self.world.config["places"],
         }
-        suggested = decide(agent, observation)
+        if self.gameplay == "living":
+            knowledge.localize(self, agent, observation)
+            suggested = policy.choose(self, agent, observation)
+        else:
+            suggested = decide(agent, observation)
         observation["suggested_action"] = asdict(suggested)
         observation["allowed_actions"] = [{"place": suggested.place, "activity": suggested.activity}]
-        if self.cognition_mode == "hybrid":
+        if self.cognition_mode == "hybrid" or self.gameplay == "living":
             observation["allowed_actions"] = planning.legal_actions(agent, observation)
+        if self.gameplay == "living":
+            well = {"action": "work", "location": "well", "target": None,
+                    "place": "well", "activity": "maintaining the well"}
+            if well not in observation["allowed_actions"]:
+                observation["allowed_actions"].append(well)
+        if self.cognition_mode == "hybrid":
             observation["preferred_helpers"] = {
                 task: helper.id if (helper := reflection.choose_helper(self, agent, task)) else None
                 for task in ("talk", "repair_nets", "repair_boat", "gather_herbs", "fish")
             }
             observation["reflection"] = reflection.context(self, aid)
-        observation["result_options"] = self._result_options(agent, suggested.place)
+        observation["result_options"] = [] if self.gameplay == "living" else self._result_options(agent, suggested.place)
         observation["mood_options"] = ["content", "hopeful", "worried", "tired"]
         observation["promise_options"] = self._promise_options(agent)
         observation["speech_options"] = self._speech_options(agent)
@@ -433,6 +482,12 @@ class Simulation:
             return
         if data.get("contract") == reflection.CONTRACT:
             reflection.apply_turn(self, aid, data)
+            return
+        if data.get("contract") == policy.ATTEMPT:
+            if self.gameplay != "living":
+                raise ValueError("Enable the living season before submitting attempts")
+            observation = self.observe(aid)
+            self.pending[aid] = policy.validate_attempt(data, observation)
             return
         observation = self.observe(aid)
         if data.get("contract") == planning.CONTRACT:
@@ -469,7 +524,11 @@ class Simulation:
         })
 
     def _with_voice(self, agent, observation, voice):
-        ruled = self.decision(agent, observation)
+        if self.gameplay == "living":
+            suggested = observation["suggested_action"]
+            ruled = Action(suggested["place"], suggested["activity"])
+        else:
+            ruled = self.decision(agent, observation)
         if voice is None:
             return ruled
 
@@ -546,6 +605,9 @@ class Simulation:
         day_ended = self.day != previous_day
         if day_ended:
             self._reflect(previous_day)
+            if self.gameplay == "living":
+                ecology.end_day(self, previous_day)
+                governance.close_polls(self)
         for agent in self.agents.values():
             agent.speech = None
             agent.thought = None
@@ -568,15 +630,24 @@ class Simulation:
                 continue
             observation = self.observe(agent.id)
             action = self.pending.pop(agent.id, None)
-            # The rules choose where the body goes. A connected brain can still
-            # leave its mood, thought, speech, promise and work result.
+            # Without a usable attempt, the season's own policy moves the body.
+            # A connected brain can still leave its mood, thought, speech or promise.
+            # In the living season a legal attempt is kept; the world rolls the result.
             suggested = observation["suggested_action"]
+            legal_attempt = (
+                self.gameplay == "living"
+                and action is not None
+                and any(item.get("place") == action.place and item.get("activity") == action.activity
+                        for item in observation.get("allowed_actions", []))
+            )
             if (
                 action is None
                 or self.weather == "storm"
                 or self.step < self.festival_until
-                or action.place != suggested["place"]
-                or action.activity != suggested["activity"]
+                or (
+                    not legal_attempt
+                    and (action.place != suggested["place"] or action.activity != suggested["activity"])
+                )
             ):
                 action = self._with_voice(agent, observation, action)
             cognitive = agent.cognitive_plan
@@ -598,7 +669,11 @@ class Simulation:
                 if planned:
                     self.request_replan(agent.id, "commitment_due")
                 action, planned = meeting, False
-            urgent = survival.personal_action(agent, observation)
+            # Body needs use the real stores. A belief can be wrong; thirst cannot wait on it.
+            urgent = survival.personal_action(agent, {
+                "step": self.step, "pantry": self.pantry, "places": self.world.config["places"],
+                **self.survival_view(),
+            })
             if urgent and action.activity != urgent.activity:
                 if planned:
                     self.request_replan(agent.id, "survival_need")
@@ -632,10 +707,16 @@ class Simulation:
             productive = not planned or cognitive["steps"][cognitive["index"]]["action"] in ("work", "routine")
             if meeting:
                 productive = False  # Shared work runs after both residents move.
-            handled = arrived and survival.execute(self, agent, action.place, action.activity)
+            handled = False
+            if arrived and self.gameplay == "living" and action.activity == "maintaining the well":
+                ecology.maintain_well(self, agent)
+                handled = True
+            if not handled:
+                handled = arrived and survival.execute(self, agent, action.place, action.activity)
             if arrived and not handled and productive and self.step - agent.last_work >= 4 and self._result_options(agent, action.place):
                 agent.last_work = self.step
-                self._work(agent, action.place, action.result)
+                requested = None if self.gameplay == "living" else action.result
+                self._work(agent, action.place, requested)
             if planned and arrived and cognitive["status"] == "active":
                 cognitive["remaining"] -= 1
                 cognitive["updated_step"] = self.step
@@ -668,16 +749,38 @@ class Simulation:
         options = self._result_options(agent, place)
         if not options:
             return
-        outcome = work.perform(self, options, requested)
+        if self.gameplay == "living":
+            requested = None
+        skill = policy.skill_level(agent, place) if self.gameplay == "living" else 0.0
+        outcome = work.perform(self, options, requested, place=place, actor=agent.id, skill=skill)
         result, detail, success = outcome["result"], outcome["detail"], outcome["success"]
         agent.work_count += 1
         agent.result = result
         agent.mood = "content" if success else "worried"
         text = f"{agent.name} {detail}."
         agent.thought = agent.thought or text
-        self.event(text, "work", [agent.id], place=place,
+        witnesses = []
+        if self.gameplay == "living":
+            for other in self.agents.values():
+                if other.id != agent.id and abs(other.x - agent.x) + abs(other.y - agent.y) <= knowledge.SEE:
+                    witnesses.append(other.id)
+            task = policy.task_for(place, agent.role)
+            if success and result in ("silver_fish", "mackerel"):
+                ecology.transfer(self, resource="fish", quantity=1, source=place,
+                                 destination="pantry", actor=agent.id, purpose="catch", witnesses=witnesses)
+                governance.note_contribution(self, agent.id, "fish", 1)
+            elif success and result in ("first_basil", "mint_bundle"):
+                ecology.transfer(self, resource="herbs", quantity=1, source=place,
+                                 destination="pantry", actor=agent.id, purpose="harvest", witnesses=witnesses)
+                governance.note_contribution(self, agent.id, "herbs", 1)
+        event = self.event(text, "work", [agent.id, *witnesses], place=place,
                    collection_center=survival.FOOD_CENTER if result in ("silver_fish", "mackerel", "first_basil", "mint_bundle") else None,
-                   significant=outcome["significant"])
+                   significant=outcome["significant"],
+                   **({"cause": outcome["cause"], "witnesses": witnesses} if self.gameplay == "living" else {}))
+        # A charter limit or a broken tool is not evidence that the ground itself failed.
+        if (self.gameplay == "living" and task and outcome["cause"] != "rule"
+                and result not in ("torn_mesh", "leaking_boat")):
+            policy.record_outcome(self, agent, task, place, success, event["id"])
         key = f"{self.day}:{agent.id}:{place}"
         summary = self.daily_work.setdefault(key, {"day": self.day, "agent": agent.id, "place": place, "results": {}})
         summary["results"][result] = summary["results"].get(result, 0) + 1
@@ -685,16 +788,26 @@ class Simulation:
             self._progress_goal(agent, "work", place=place)
 
     def _supper(self):
-        diners = sorted((a for a in self.agents.values() if not survival.collapsed(a)), key=lambda a: (a.food, a.id))
+        present = [a for a in self.agents.values() if not survival.collapsed(a)]
+        equal_rations = self.gameplay == "living" and self.governance["rules"]["rations"]["rule"] == "equal"
+        fish_order = governance.ration_order(self, present)
         needs = survival.supper_need(self)
         need_fish, need_herbs = needs["fish"], needs["herbs"]
-        fish, herbs = min(len(diners), self.pantry["fish"]), min(need_herbs, len(diners), self.pantry["herbs"])
+        fish, herbs = min(len(present), self.pantry["fish"]), min(need_herbs, len(present), self.pantry["herbs"])
         self.pantry["fish"] -= fish
         self.pantry["herbs"] -= herbs
-        for agent in diners[:fish]:
+        served = [agent.id for agent in fish_order[:fish]]
+        for agent in fish_order[:fish]:
             agent.food = survival.clamp(agent.food + survival.FISH_FOOD)
-        for agent in sorted(diners, key=lambda a: (a.food, a.id))[:herbs]:
+            if self.gameplay == "living":
+                ecology.transfer(self, resource="fish", quantity=1, source="pantry",
+                                 destination=agent.id, actor="village", purpose="supper")
+        herb_order = fish_order if equal_rations else sorted(present, key=lambda a: (a.food, a.id))
+        for agent in herb_order[:herbs]:
             agent.food = survival.clamp(agent.food + survival.HERB_FOOD)
+            if self.gameplay == "living":
+                ecology.transfer(self, resource="herbs", quantity=1, source="pantry",
+                                 destination=agent.id, actor="village", purpose="supper")
         missing = {"fish": need_fish - fish, "herbs": need_herbs - herbs}
         empty = []
         for agent in self.agents.values():
@@ -706,8 +819,14 @@ class Simulation:
         text = (f"Supper on day {self.day} used {fish} fish and {herbs} herb bundles; "
                 + (f"the table was short by {missing['fish']} fish and {missing['herbs']} herbs" if shortage else "everyone ate well")
                 + (f", and {', '.join(empty)} came home empty-handed" if shortage and empty else "") + ".")
-        item = {"day": self.day, "fish": fish, "herbs": herbs, "missing": missing, "empty_handed": empty, "text": text}
+        rule = self.governance["rules"]["rations"]["rule"] if self.gameplay == "living" else "need"
+        if self.gameplay == "living":
+            text += f" The {rule} supper rule decided the portions."
+        item = {"day": self.day, "fish": fish, "herbs": herbs, "missing": missing,
+                "empty_handed": empty, "text": text, "rule": rule, "served": served}
         self.suppers.append(item)
+        if self.gameplay == "living":
+            governance.consider_shortage(self, item)
         self.last_miss = {}
         if missing["fish"]:
             self.last_miss["fisher"] = "Yesterday’s jetty left supper short; try the shore for 3 fish"
@@ -827,6 +946,9 @@ class Simulation:
                 self.event(fact, "promise", [first.id, other.id])
             self._progress_goal(first, "social", partner=other.id)
             self._progress_goal(other, "social", partner=first.id)
+            if self.gameplay == "living":
+                knowledge.share(self, first, other)
+                knowledge.share(self, other, first)
 
     def survival_observation(self):
         return {"step": self.step, "pantry": self.pantry, "water_sources": self.water_sources,
@@ -853,6 +975,10 @@ class Simulation:
             "village": self.world.config["name"],
             "seed": self.seed,
             "cognition_mode": self.cognition_mode,
+            "gameplay": self.gameplay,
+            "ecology": copy.deepcopy(self.ecology),
+            "governance": governance.public_view(self),
+            "ledger": copy.deepcopy(self.ledger[-40:]),
             "step": self.step,
             "day": self.day,
             "minute": self.minute,

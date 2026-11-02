@@ -210,6 +210,12 @@ def apply_turn(sim, aid, data):
         first, second = conversation["participants"]
         sim._progress_goal(sim.residents[first], "social", partner=second)
         sim._progress_goal(sim.residents[second], "social", partner=first)
+    if getattr(sim, "gameplay", "legacy") == "living" and aid in sim.agents:
+        from . import knowledge
+        partner = next((person for person in conversation["participants"] if person != aid), None)
+        listener = sim.agents.get(partner) if partner else None
+        if listener is not None:
+            knowledge.share(sim, sim.agents[aid], listener)
 
 
 def _goal_aligned(sim, aid, partner, terms):

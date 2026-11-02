@@ -87,7 +87,7 @@ center. Anyone can fish, garden or collect water, regardless of their usual craf
 After their initial daily work, free villagers divide shortages by distance and
 current stock, with water first. Personal hunger and thirst interrupt plans.
 
-The well and rain barrel replenish every step without a cap. Villagers collect
+The default season keeps the original water rules: the well and rain barrel replenish every step without a cap. The living season (`--gameplay living`, or Season in settings) gives the bay finite fish, gardens and water, so a heavy harvest is still short the next morning. Villagers collect
 water into the water collection center and drink one unit for +20 water. The sea
 is never drinkable. Low food or water reduces health; being well fed and watered
 restores it. At zero health a villager collapses for one step, then resumes with

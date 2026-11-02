@@ -13,12 +13,12 @@ import tempfile
 
 from .decisions import Action
 from .cognition.memory import make_memory, validate_memory
-from .cognition import planning, conversations
+from .cognition import planning, conversations, knowledge, policy
 from .simulation import Agent, PERSONAS, Simulation
 from .world import World
-from . import visitors, survival, work, events
+from . import visitors, survival, work, events, ecology, governance
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
@@ -81,6 +81,8 @@ def _migrate(data):
         raise ValueError("Unsupported session version")
     if data["schema_version"] == SCHEMA_VERSION:
         return data
+    if data["schema_version"] == 9:
+        return _migrate_living(copy.deepcopy(data))
     if data["schema_version"] == 8:
         return _migrate_events(copy.deepcopy(data))
     if data["schema_version"] == 7:
@@ -205,6 +207,22 @@ def _migrate_events(data):
     if data.get("world") in (legacy, _without_survival_places(legacy), _without_survival_places(current)):
         data["world"] = copy.deepcopy(current)
     _relocate(data)
+    return _migrate_living(data)
+
+
+def _migrate_living(data):
+    """Schema 10 keeps the legacy season unless a save already chose living."""
+    state = data["state"]
+    state.setdefault("gameplay", "legacy")
+    state.setdefault("ecology", ecology.initial())
+    state.setdefault("governance", governance.initial())
+    state.setdefault("ledger", [])
+    for aid, resident in data["residents"].items():
+        resident.setdefault("traits", knowledge.traits_for(aid))
+        resident.setdefault("beliefs", [])
+        resident.setdefault("skills", policy.initial_skills())
+        resident.setdefault("estimates", {})
+        resident.setdefault("lessons", [])
     data["schema_version"] = SCHEMA_VERSION
     return data
 
@@ -290,6 +308,11 @@ def _restore(data):
         raise ValueError("Invalid weather or journal")
     if state["cognition_mode"] not in planning.MODES:
         raise ValueError("Invalid cognition mode")
+    if state.get("gameplay") not in ("legacy", "living"):
+        raise ValueError("Invalid gameplay")
+    ecology.validate(state["ecology"])
+    governance.validate(state["governance"], {persona[0] for persona in PERSONAS})
+    ecology.validate_ledger(state["ledger"], state.get("next_event_id", 10**9))
     # Reject container/type changes for every state field, including future additions.
     for key, value in state.items():
         original = getattr(candidate, key)
@@ -467,6 +490,8 @@ def _restore(data):
             raise ValueError("Invalid reflection cursor")
         if record["reflection_reason"] not in (None, "day_end"):
             raise ValueError("Invalid reflection state")
+        knowledge.validate_personal(record, personas, state["next_event_id"])
+        policy.validate_personal(record, state["next_event_id"])
         record = {**record, "provider": None, "provider_until": 0, "trust": normalized_trust}
         _validate_plan(record, state, candidate.world, personas)
         restored[aid] = Agent(**record)
@@ -490,7 +515,10 @@ def _restore(data):
     for aid, action in pending.items():
         if not isinstance(action, dict) or set(action) != {field.name for field in fields(Action)}:
             raise ValueError("Invalid pending decision")
-        candidate.submit(aid, {**action, "step": candidate.step})
+        payload = {**action, "step": candidate.step}
+        if candidate.gameplay == "living":
+            payload["result"] = None
+        candidate.submit(aid, payload)
     # Exercise observation and snapshot paths before admitting the candidate.
     for aid in active:
         candidate.observe(aid)

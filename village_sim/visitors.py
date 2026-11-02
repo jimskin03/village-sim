@@ -489,7 +489,7 @@ def _work_action(sim, visitor, data, prov):
         raise ValueError("Work is available from 06:00 to 18:00 outside storms and festivals")
     # An attempt costs one unit even when the world's result is a setback.
     _spend_units(visitor, 1)
-    outcome = work.perform(sim, options)
+    outcome = work.perform(sim, options, place=here, actor=visitor["id"])
     text = f"{visitor['name']}, a visitor, {outcome['detail']}."
     visitor["activity"] = text
     event = sim.event(text, "visitor_work", (), visitor=visitor["id"], provenance=prov,
