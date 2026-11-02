@@ -38,8 +38,10 @@ rain barrel transfers up to six available units into this store. A `drink`
 activity at either source or the center takes one step after arrival and uses
 one unit from the shared store. The well starts with six units and replenishes
 one per step. The barrel starts with six units and replenishes one per step in
-clear weather or three during a storm. Neither source has a maximum stock,
-daily yield cap or midnight reset. Empty sources require a short wait. Seawater
+clear weather or three during a storm. In the default legacy season neither
+source has a maximum stock, daily yield cap or midnight reset. The living
+season caps the well at 12 and the barrel at 8 and fills them from a finite
+aquifer and the rain. Empty sources require a short wait. Seawater
 at the shore or jetty is rejected explicitly.
 
 Every observation and snapshot includes `villager_count`, `present_villagers`,
@@ -74,6 +76,11 @@ centers. There is no immunity window: unresolved needs can cause another
 collapse. Every collapse and recovery has its own journal event and memory.
 Residents never die, leave or become permanently disabled from these stats.
 
+A pirate attack uses the same collapse and the same restart health. The
+knocked-out villagers stay down for the pirate duration in `village_sim/events.py`,
+which is longer than the one-step health-zero collapse. Nobody dies, and there
+is no fight. Visitors see the raid and cannot talk to someone who is down.
+
 ## Visitors, saves and replay
 
 Visitors can gift one or two fish or herb units at the food center, and water
@@ -84,9 +91,15 @@ usable. Repeated sabotage within that window cannot extend its deadline.
 All effects share the existing six-unit daily visitor budget and retain their
 event provenance and ledger entries.
 
-Checkpoint schema 8 persists stats, collapse deadlines, source supplies,
-temporary fouling and shared water. Schemas 1–7 migrate without changing the
-input document; all residents, including absent ones, receive starting stats
-and the new places are added to the old map. New checkpoints validate bounds
-and reject nonfinite numbers. Replay/snapshot envelopes stay at schema 1 with
-additional survival fields, so old stories remain viewable without meters.
+Checkpoint schema 10 persists stats, collapse deadlines, source supplies,
+temporary fouling, shared water, happiness, and the quiet-rest and pirate
+clocks. It also persists a living season's ecology, charter, resource ledger,
+beliefs, skills and lessons. Schemas 1–9 migrate without changing the input document. Survival
+fields are filled in for every resident, including absent ones. A saved map
+that matches the previous coast, or that coast before the collection places,
+is replaced by the current coast. Anyone left on a tile that is no longer
+walkable is moved home, and a visitor in the water is moved to the guest
+cottage. New checkpoints validate bounds and reject nonfinite numbers.
+Replay/snapshot envelopes stay at schema 1 with additional survival fields,
+so old stories remain viewable. Frames from before happiness simply omit that
+meter.

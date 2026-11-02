@@ -1,7 +1,7 @@
 # Cognitive engine and hybrid mode
 
 Delivery contract for [issue #4](https://github.com/jimskin03/village-sim/issues/4).
-Phases 1–4 are implemented. Local knowledge and coordination remain future stages.
+Phases 1–5 are implemented. Group gatherings remain a future stage.
 
 | Stage | Deliverable | Status |
 | --- | --- | --- |
@@ -9,7 +9,7 @@ Phases 1–4 are implemented. Local knowledge and coordination remain future sta
 | 2 | Autonomous plans, replanning and cognition mode flag | Implemented |
 | 3 | Multi-turn conversations and negotiated commitments | Implemented |
 | 4 | Individual reflection and evolving trust | Implemented |
-| 5 | Local perception and information provenance | Specified |
+| 5 | Local perception and information provenance | Implemented in the living season |
 | 6 | Agent-organized gatherings and coordination | Specified |
 
 ## Memory and retrieval
@@ -249,9 +249,9 @@ Checkpoint validation checks alternating turns, memory references, matching offe
 and acceptance, and rejects unilateral or missing appointments. Schema 1–3 saves
 migrate to schema 4 without manufacturing conversations. Schema 4 saves migrate
 to schema 5 with empty trust, and schema 5 saves gain a together flag: it is
-true only when the saved attendance already lists both people. Private knowledge
-provenance and group gatherings
-remain stages 5–6.
+true only when the saved attendance already lists both people. In the living
+season a resident records only what they can see, and a report names who spoke.
+Group gatherings remain stage 6.
 
 ### Personal reflection and trust (stage 4, implemented)
 

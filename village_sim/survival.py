@@ -2,6 +2,7 @@
 
 import math
 
+from . import work
 from .decisions import Action
 
 FOOD_DRAIN = WATER_DRAIN = 0.5
@@ -24,6 +25,18 @@ def clamp(value):
 def collapsed(agent):
     # A nonzero deadline remains collapsed until tick explicitly recovers them.
     return agent.collapsed_until > 0
+
+
+def knock_out(sim, agent, steps, text=None):
+    """Drop a villager where they stand. Recovery still uses the restart health."""
+    agent.health = 0
+    agent.collapsed_until = sim.step + steps
+    agent.activity = "collapsed"
+    agent.speech = agent.thought = agent.result = None
+    sim.pending.pop(agent.id, None)
+    if text is None:
+        text = f"{agent.name} collapsed and must recover for {steps} step."
+    sim.event(text, "collapse", [agent.id], significant=True)
 
 
 def initial_sources():
@@ -53,8 +66,13 @@ def centers(sim):
 
 
 def tick(sim):
-    for place, source in sim.water_sources.items():
-        source["supply"] += 3 if place == "rain_barrel" and sim.weather == "storm" else 1
+    if getattr(sim, "gameplay", "legacy") == "living":
+        from . import ecology
+        ecology.replenish(sim)
+    else:
+        # Legacy wells and barrels have no capacity. Living season caps them.
+        for place, source in sim.water_sources.items():
+            source["supply"] += 3 if place == "rain_barrel" and sim.weather == "storm" else 1
     for agent in sim.agents.values():
         recovered = False
         if collapsed(agent) and sim.step >= agent.collapsed_until:
@@ -75,12 +93,7 @@ def tick(sim):
             agent.health = clamp(agent.health + 0.5)
         if agent.health == 0 and not collapsed(agent):
             duration = math.ceil(COLLAPSE_MINUTES / sim.world.config["minutes_per_step"])
-            agent.collapsed_until = sim.step + duration
-            agent.activity = "collapsed"
-            agent.speech = agent.thought = agent.result = None
-            sim.pending.pop(agent.id, None)
-            sim.event(f"{agent.name} collapsed and must recover for {duration} step.",
-                      "collapse", [agent.id], significant=True)
+            knock_out(sim, agent, duration)
         if agent.health < 30:
             agent.mood = "tired"
 
@@ -108,7 +121,8 @@ def personal_action(agent, observation):
     if agent.food <= 55 and (observation["pantry"]["fish"] or observation["pantry"]["herbs"]):
         return Action(FOOD_CENTER, "eat")
     if agent.food <= 40:
-        return Action("garden", "gathering herbs for shared food")
+        return Action(nearest(agent, observation, work.TASKS["garden"]["places"]),
+                      "gathering herbs for shared food")
     return None
 
 
@@ -146,7 +160,8 @@ def suggested_action(agent, observation):
                 activity = "mending the torn village net" if places == ["nets"] else "fishing for shared food"
                 units = FISH_FOOD
             else:
-                places, activity, units = ["garden"], "gathering herbs for shared food", HERB_FOOD
+                places = list(work.TASKS["garden"]["places"])
+                activity, units = "gathering herbs for shared food", HERB_FOOD
         points = {p["id"]: p for p in observation["places"]}
         ranked = sorted(free, key=lambda a: (
             min(abs(a["x"] - points[p]["x"]) + abs(a["y"] - points[p]["y"]) for p in places), a["id"]))
@@ -182,9 +197,16 @@ def execute(sim, agent, place, activity):
     if activity == "collect water":
         source = sim.water_sources[place]
         amount = min(COLLECT_UNITS, source["supply"]) if source["fouled_until"] <= sim.step else 0
+        if getattr(sim, "gameplay", "legacy") == "living":
+            from . import ecology, governance
+            amount = min(amount, governance.collect_cap(sim, agent))
         if amount:
             source["supply"] -= amount
             sim.pantry["water"] += amount
+            if getattr(sim, "gameplay", "legacy") == "living":
+                ecology.transfer(sim, resource="water", quantity=amount, source=place,
+                                 destination="pantry", actor=agent.id, purpose="collect")
+                governance.note_contribution(sim, agent.id, "water", amount)
             text = f"{agent.name} brought {amount} water units from the {sim.world.places[place]['name']} to the water collection center."
         else:
             text = f"{agent.name} is waiting for fresh water at the {sim.world.places[place]['name']}."
@@ -195,6 +217,10 @@ def execute(sim, agent, place, activity):
             return True
         sim.pantry["water"] -= 1
         agent.water = clamp(agent.water + DRINK_WATER)
+        if getattr(sim, "gameplay", "legacy") == "living":
+            from . import ecology
+            ecology.transfer(sim, resource="water", quantity=1, source="pantry",
+                             destination=agent.id, actor=agent.id, purpose="drink")
         text = f"{agent.name} drank fresh water from the water collection center's store."
     else:
         resource = "herbs" if sim.pantry["herbs"] else "fish"
@@ -202,6 +228,10 @@ def execute(sim, agent, place, activity):
             return True
         sim.pantry[resource] -= 1
         agent.food = clamp(agent.food + (HERB_FOOD if resource == "herbs" else FISH_FOOD))
+        if getattr(sim, "gameplay", "legacy") == "living":
+            from . import ecology
+            ecology.transfer(sim, resource=resource, quantity=1, source="pantry",
+                             destination=agent.id, actor=agent.id, purpose="snack")
         text = f"{agent.name} ate a {'herb bundle' if resource == 'herbs' else 'fish ration'} from the food collection center."
     sim.event(text, "survival", [agent.id], place=place)
     return True

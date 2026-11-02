@@ -2,16 +2,17 @@
 
 TASKS = {
     "fish": {"places": ("jetty", "shore"), "role": "fisher"},
-    "garden": {"places": ("garden",), "role": "gardener"},
+    "garden": {"places": ("garden", "west_garden", "orchard"), "role": "gardener"},
     "mend_net": {"places": ("nets",), "role": "fisher"},
     "repair_boat": {"places": ("shore",), "role": "boatwright"},
 }
 
 
 def options(sim, place, role, *, hungry=False, collapsed=False):
+    gardens = TASKS["garden"]["places"]
     if collapsed:
         return []
-    if place == "garden" and hungry:
+    if place in gardens and hungry:
         return ["first_basil", "mint_bundle", "wilted_seedlings"]
     if sim.weather == "storm" or sim.step < sim.festival_until or not (6 <= sim.minute // 60 < 18):
         return []
@@ -21,19 +22,33 @@ def options(sim, place, role, *, hungry=False, collapsed=False):
         if sim.pantry["net_condition"] == "torn":
             return ["torn_mesh"]
         return ["silver_fish", "mackerel", "empty_net", "torn_mesh"]
-    if place == "garden":
+    if place in gardens:
         return ["first_basil", "mint_bundle", "wilted_seedlings"]
     if role == "boatwright" and place == "shore":
         return ["sealed_hull", "sound_boat", "leaking_boat"]
     return []
 
 
-def perform(sim, options, requested=None):
-    """Resolve a legal attempt. Callers own attribution and actor-specific state."""
+def perform(sim, options, requested=None, *, place=None, actor=None, skill=0.0):
+    """Resolve a legal attempt. Callers own attribution and actor-specific state.
+
+    Legacy voice replies may still name a listed result. In the living season the
+    world rolls the outcome; a requested result is ignored.
+    """
     if not options:
         raise ValueError("Work is not available here now")
-    # Useful work is common; failures still have material consequences.
-    result = requested if requested in options else sim.rng.choice(options[:2] * 3 + options[2:])
+    cause = None
+    if getattr(sim, "gameplay", "legacy") == "living":
+        from . import ecology
+        options, abundance, cause = ecology.prepare(sim, place, options)
+        if not options:
+            raise ValueError("Work is not available here now")
+        weights = ecology.success_weights(options, skill=skill, abundance=abundance, care=ecology.care_bonus(sim))
+        result = sim.rng.choices(options, weights=weights, k=1)[0]
+        result, cause = ecology.commit(sim, place, result, actor, cause)
+    else:
+        # Useful work is common; failures still have material consequences.
+        result = requested if requested in options else sim.rng.choice(options[:2] * 3 + options[2:])
     detail, success = {
         "silver_fish": ("caught a silver fish", True),
         "mackerel": ("landed a striped mackerel", True),
@@ -60,5 +75,5 @@ def perform(sim, options, requested=None):
         sim.pantry["boat_condition"] = "leaking"
     elif result in ("sealed_hull", "sound_boat"):
         sim.pantry["boat_condition"] = "sound"
-    return {"result": result, "detail": detail, "success": success,
+    return {"result": result, "detail": detail, "success": success, "cause": cause,
             "significant": result in ("torn_mesh", "leaking_boat", "wilted_seedlings")}

@@ -25,7 +25,9 @@ previous viewer's largest map at each breakpoint. The viewport follows the
 browser's dynamic viewport height, without document scrolling. Scrolling, mouse dragging, touch swipes and
 keyboard scrolling explore the canvas; pinned controls toggle labels, further
 zoom and a whole-map overview. Selecting a resident centers their position in
-the enlarged view. The underlying navigation grid and original art are unchanged.
+the enlarged view. The navigation grid is 40 by 23. About 70 percent of it is
+land (645 of 920 tiles), generated from the world polygons, with a sea frame,
+an open bay east of the pier, and a southern boat bay.
 Floating controls show the clock, playback and map tools. Villagers, journal and
 events open in nonmodal panels from the dock, with only one panel open at a time.
 Panels scroll independently, close with their close button or Escape, and return
@@ -203,11 +205,16 @@ validated checkpoint. Large stories need sufficient browser memory; the full exp
 is downloaded as a Blob without parsing its frames first. The session-resume HTTP
 body remains limited to 50 MB, independently of replay-file size.
 
-Checkpoint schema 8 includes complete cognitive memories, plans, transcripts,
+Checkpoint schema 10 includes complete cognitive memories, plans, transcripts,
 commitments, whether a meeting was attended together, trust scores, and
 personal-reflection cursors, visitors, survival stats, collapse deadlines,
-freshwater sources and shared water. Schemas 1–7 migrate
-before validation, retaining the saved thinking style (schemas 1–2 default to Rules).
+freshwater sources, shared water, happiness, and the clocks for quiet rest
+and pirate attacks. A living season also keeps ecology, the charter, the
+resource ledger, beliefs, skills and lessons. Schemas 1–9 migrate
+before validation, retaining the saved thinking style (schemas 1–2 default to Rules)
+and the legacy season until a village chooses otherwise.
+Older coastlines that match the previous map are replaced, and anyone left
+standing in the water is moved home.
 Stop the server before moving its checkpoint
 and SQLite sidecar together. Archive storage grows with experience.
 Replay/snapshot schema remains 1.

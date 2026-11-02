@@ -22,7 +22,7 @@ python3 -m village_sim --port 8080 --agents 5 --interval 1 --seed 42
 ```
 
 The viewer works on desktop and phone. Pause, advance a single step, adjust speed,
-choose 1–8 villagers in settings, or introduce a passing storm or lantern festival.
+choose 1–8 villagers in settings, or introduce a passing storm, a lantern festival, a pirate attack, or a quiet evening.
 Desktop and phone use the same pixel art. Graphics load in small batches and retry
 interrupted downloads. If loading still fails, the viewer labels the painted backup
 and offers **Retry graphics** without restarting the village.
@@ -55,8 +55,15 @@ automatically.
 The village shares a pantry: fish, herbs, net and boat condition, and a hearth
 that lights after dark. Work produces specific successes or failures. Supper at
 dusk spends the supplies, remembers a shortfall, and shapes tomorrow’s goals.
-Storms damage the net and close the jetty; festivals spend supplies and welcome
-a visitor to the guest cottage. Relationships keep the latest shared promise or
+Storms damage the net, close the jetty, and cost each villager health and food
+as well as some stores. Festivals spend supplies, welcome a visitor to the guest
+cottage, and lift happiness while the lanterns last. A quiet evening ends a storm
+or festival and lets standing villagers rest. A pirate attack sails a boat in from the eastern sea. It lands at the jetty,
+the crew runs into the village, knocks out the nearest villagers, and takes
+supplies. They collapse and recover, and nobody dies. With village sound on,
+a storm, a festival, a quiet evening, and a pirate attack each play their own
+short theme. Effect sizes and durations live in
+`village_sim/events.py`. Relationships keep the latest shared promise or
 grudge. In Hybrid mode, trust rises in both directions only when both people are
 at the meeting at the same time. A missed meeting lowers trust only for the
 person who waited while the other never came. A villager who has seen
@@ -80,11 +87,12 @@ center. Anyone can fish, garden or collect water, regardless of their usual craf
 After their initial daily work, free villagers divide shortages by distance and
 current stock, with water first. Personal hunger and thirst interrupt plans.
 
-The well and rain barrel replenish every step without a cap. Villagers collect
+The default season keeps the original water rules: the well and rain barrel replenish every step without a cap. The living season (`--gameplay living`, or Season in settings) gives the bay finite fish, gardens and water, so a heavy harvest is still short the next morning. Villagers collect
 water into the water collection center and drink one unit for +20 water. The sea
 is never drinkable. Low food or water reduces health; being well fed and watered
 restores it. At zero health a villager collapses for one step, then resumes with
-10 health. Nobody dies or disappears from survival shortages. The
+10 health. A pirate attack uses that same recovery, and those villagers stay down
+longer. Nobody dies or disappears. Happiness is a separate 0–100 stat. The
 [survival rules](docs/survival.md) describe rates, collection centers and recovery.
 
 Live sessions save atomically to `.village-sim/session.json` after each step and
@@ -213,6 +221,7 @@ village-sim --headless
 - `village_sim/cognition/planning.py`: legal choices and validated autonomous plans.
 - `village_sim/cognition/embeddings.py`: optional bounded semantic-recall cache.
 - `village_sim/simulation.py`: clock, personas, memory, relationships, work and events.
+- `village_sim/events.py`: operator storms, festivals, quiet evenings, and pirate attacks.
 - `village_sim/survival.py`: food, fresh water, shared reserves and collapse/recovery.
 - `village_sim/decisions.py`: replaceable `decide(agent, observation) -> Action`.
 - `village_sim/providers.py`: optional OpenAI-compatible model adapter.

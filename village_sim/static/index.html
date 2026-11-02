@@ -310,6 +310,7 @@
             <p class="journal-subtitle">What the village carries into tomorrow.</p>
             <div id="reflections" aria-label="Pinned midnight reflections"></div>
             <div id="supper-ledger" aria-label="Supper ledger"></div>
+            <div id="charter" aria-label="Village charter"></div>
             <div
               id="journal"
               class="journal-entries"
@@ -387,13 +388,14 @@
               </div>
             </div>
             <div class="event-buttons">
-              <button data-event="storm" data-operator-control disabled><span>☂</span> A passing storm</button
-              ><button data-event="festival" data-operator-control disabled>
+              <button data-event="storm" data-operator-control disabled title="Tears the net, and costs health, food and stores"><span>☂</span> A passing storm</button
+              ><button data-event="festival" data-operator-control disabled title="Shares supplies and lifts happiness for a while">
                 <span>✧</span> Lantern festival</button
+              ><button data-event="pirate" data-operator-control disabled title="A boat sails in from the sea, lands at the jetty, and the crew knocks villagers down"><span>⚑</span> Pirate attack</button
               ><button
                 data-event="clear"
                 data-operator-control disabled
-                title="End the current storm or festival"
+                title="Ends a storm or festival and lets the village rest"
               >
                 <span>≈</span> Quiet evening
               </button>
@@ -484,6 +486,13 @@
         </select>
       </label>
       <p class="setting-note">Hybrid lets villagers plan work, rest and visits, negotiate meetings, and follow through on agreements. They reflect on what they experienced and trust people who keep meetings. Routines and careful replies keep them moving while models are unavailable.</p>
+      <label class="setting-row">Season
+        <select id="gameplay-mode" data-operator-control disabled>
+          <option value="legacy">Legacy · the original bay</option>
+          <option value="living">Living · stocks, learning and agreements</option>
+        </select>
+      </label>
+      <p class="setting-note">The living season gives the bay finite fish, gardens and water. People learn from repeated work, remember who told them what, and can vote on rations, water and the harvest. A fresh start keeps the season you chose. The legacy season keeps the original unbounded well.</p>
       <p id="persistence-status" class="setting-note" role="status"></p>
       <div class="session-tools" aria-label="Recordings and information">
         <button id="export" class="secondary-button">

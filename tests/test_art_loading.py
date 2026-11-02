@@ -119,6 +119,57 @@ await elements.get('art-retry').listeners.click();
 assert.equal(view.ready,true);
 """)
 
+    def test_pirate_raid_sails_in_and_strikes_before_it_leaves(self):
+        self.run_js(r"""
+const view = start();
+await waitFor(() => !view.loading);
+const beats = view.raidBeats;
+const at = (name, extra = 40) => {
+  let t = 0;
+  for (const [n, d] of beats) {
+    if (n === name) return t + extra;
+    t += d;
+  }
+  return t + extra;
+};
+const crew = [
+  {id:"lin", x:24, y:5, collapsedUntil:10},
+  {id:"tom", x:16, y:6, collapsedUntil:10},
+  {id:"mara", x:9, y:10, collapsedUntil:1},
+];
+view.notePirate(0, true, crew);
+view.manifest = {characters:{
+  lin:{actions:{idle:{s:"stand.png"}, collapsed:{s:"down.png"}}},
+  tom:{actions:{idle:{s:"tom-stand.png"}, collapsed:{s:"tom-down.png"}}},
+}};
+const early = view.raidFrame(at("approach", 80));
+assert.equal(early.phase, "approach");
+assert.ok(early.boat.x > early.landing.x);
+assert.equal(early.down.join(","), "");
+assert.equal(early.targets.map((t) => t.id).join(","), "lin,tom");
+assert.equal(view.raidPose("lin", "s", early), "stand.png");
+const inland = view.raidFrame(at("inland"));
+assert.equal(inland.phase, "inland");
+assert.ok(inland.crew[0].x < early.landing.x);
+const strike = view.raidFrame(at("strike"));
+assert.equal(strike.phase, "strike");
+assert.equal(strike.down.join(","), "lin,tom");
+const lin = {x:(24 + 0.5) * 32, y:(5 + 0.5) * 32};
+assert.ok(Math.hypot(strike.crew[0].x - lin.x, strike.crew[0].y - lin.y) < 8);
+assert.equal(view.raidPose("lin", "s", strike), "down.png");
+view.notePirate(at("strike"), false, []);
+assert.equal(view.raidFrame(at("strike")).phase, "strike");
+const shown = beats.reduce((sum, beat) => sum + beat[1], 0);
+view.notePirate(shown, false, []);
+assert.equal(view.raidFrame(shown).phase, "return");
+const goneAt = shown + view.raidLeave.run + view.raidLeave.sail + 30;
+assert.equal(view.raidFrame(goneAt), null);
+view.notePirate(goneAt + 10, true, crew);
+const again = view.raidFrame(goneAt + 10);
+assert.equal(again.phase, "approach");
+assert.ok(again.boat.x > again.landing.x);
+""")
+
     def test_stalled_image_times_out_and_exposes_retry(self):
         self.run_js(r"""
 files.splice(1);

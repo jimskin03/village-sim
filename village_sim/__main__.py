@@ -24,6 +24,8 @@ def main():
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--cognition", choices=("rules", "hybrid"), default="rules",
                         help="cognition for a new village (saved sessions retain their mode)")
+    parser.add_argument("--gameplay", choices=("legacy", "living"), default="legacy",
+                        help="season for a new village (saved sessions retain their season)")
     parser.add_argument("--output", type=Path, help="write a replayable and resumable JSON story")
     parser.add_argument("--state-file", type=Path, help="checkpoint path (live default: .village-sim/session.json)")
     parser.add_argument("--no-persist", action="store_true", help="start fresh and disable automatic disk saves")
@@ -43,7 +45,8 @@ def main():
     if args.headless:
         state_path = None if args.no_persist else args.state_file
         try:
-            sim = restore_session(read_session(state_path)) if state_path and state_path.exists() else Simulation(args.agents, args.seed, cognition_mode=args.cognition)
+            sim = restore_session(read_session(state_path)) if state_path and state_path.exists() else Simulation(
+                args.agents, args.seed, cognition_mode=args.cognition, gameplay=args.gameplay)
         except (OSError, ValueError) as error:
             parser.error(str(error))
         snapshots = [sim.snapshot()]
@@ -81,7 +84,7 @@ def main():
         state_path = None if args.no_persist else args.state_file or Path(".village-sim/session.json")
         try:
             serve(args.host, args.port, args.agents, args.seed, args.interval, state_path,
-                  cognition_mode=args.cognition, visitors_enabled=args.visitors)
+                  cognition_mode=args.cognition, visitors_enabled=args.visitors, gameplay=args.gameplay)
         except (OSError, ValueError) as error:
             parser.error(str(error))
 

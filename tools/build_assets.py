@@ -79,6 +79,13 @@ PEOPLE = {
     "visitor": {"tunic": (223, 201, 155), "hair": (60, 48, 40), "style": "hood", "hat": None, "role": "visitor"},
 }
 
+# Drawn for the raid scene only. They are not villagers and stay out of the
+# character set the simulation names.
+RAID_CREW = {
+    "rake": {"tunic": (120, 42, 46), "hair": (36, 28, 24), "style": "short", "hat": "bandana", "role": "pirate"},
+    "brin": {"tunic": (54, 62, 78), "hair": (48, 40, 32), "style": "hood", "hat": None, "role": "pirate"},
+}
+
 LINKS = (
     ("guest_home", "fire"),
     ("fire", "food_center"),
@@ -94,6 +101,9 @@ LINKS = (
     ("shore", "water_center"),
     ("water_center", "fire"),
     ("bench", "jetty"),
+    ("guest_home", "west_garden"),
+    ("west_garden", "orchard"),
+    ("orchard", "garden"),
 )
 
 
@@ -575,6 +585,38 @@ def boats(leaking):
     return p
 
 
+def pirate_boat():
+    """Dark hull and a black sail. The bow is the west tip, on the waterline."""
+    p = Pix(96, 64)
+    sail = (36, 40, 48, 255)
+    sail_d = (22, 26, 32, 255)
+    mark = (214, 206, 186, 255)
+    hull = (78, 48, 36, 255)
+    # Bow pixel (14, 44) is the anchor. The stern trails east, into the bay.
+    for row in range(10):
+        inset = 0 if row < 2 else row - 1
+        left = 14 + max(0, inset - 1)
+        right = 82 - inset * 2
+        color = WOOD_L if row < 2 else WOOD_D if row >= 8 else hull
+        p.hline(left, right, 42 + row, color)
+    p.hline(18, 74, 45, (48, 32, 28, 255))
+    p.set(16, 43, (210, 170, 110, 255))
+    mast = 48
+    p.vline(mast, 16, 44, (58, 40, 30, 255))
+    for index, span in enumerate(range(4, 26, 2)):
+        p.hline(mast - span, mast - 2, 18 + index, sail if index % 2 == 0 else sail_d)
+    p.set(mast - 16, 22, mark)
+    p.set(mast - 12, 22, mark)
+    p.hline(mast - 18, mast - 10, 25, mark)
+    p.hline(mast - 10, mast, 16, (168, 46, 42, 255))
+    p.hline(mast - 7, mast, 17, (120, 32, 32, 255))
+    p.hline(24, 70, 41, WOOD_L)
+    p.set(60, 40, ROPE)
+    p.set(62, 41, ROPE)
+    outline(p)
+    return p
+
+
 def net_rack(torn):
     p = Pix(44, 48)
     p.rect(6, 12, 3, 30, WOOD_D)
@@ -622,6 +664,26 @@ def garden():
         p.hline(x, x + 2, 9, WOOD_L)
         p.rect(x, 35, 3, 6, WOOD_D)
         p.hline(x, x + 2, 35, WOOD_L)
+    outline(p)
+    return p
+
+
+def orchard():
+    """Three fruit trees. Opaque pixels stay two pixels inside the frame."""
+    p = Pix(64, 52)
+    fruit = (196, 72, 58, 255)
+    for index, cx in enumerate((16, 32, 48)):
+        p.rect(cx - 1, 30, 3, 14, WOOD_D)
+        p.rect(cx - 1, 30, 1, 14, WOOD)
+        p.ellipse(cx, 24, 8, 7, LEAF_D)
+        p.ellipse(cx - 2, 22, 6, 5, LEAF)
+        p.ellipse(cx - 3, 20, 3, 2, LEAF_L)
+        for fx, fy in ((cx - 4, 22), (cx + 3, 24), (cx - 1, 27)):
+            p.set(fx, fy, fruit)
+        if index == 1:
+            p.set(cx + 1, 20, LANTERN)
+    p.hline(8, 55, 43, WOOD)
+    p.hline(8, 55, 44, WOOD_D)
     outline(p)
     return p
 
@@ -915,9 +977,12 @@ def draw_hair(p, spec, x, y, front):
         p.rect(x - 3, y - 3, 6, 3, (48, 72, 96, 255))
     elif spec["hat"] == "scarf":
         p.rect(x - 4, y + 12, 8, 3, (176, 56, 62, 255))
+    elif spec["hat"] == "bandana":
+        p.rect(x - 6, y - 1, 12, 4, (154, 42, 44, 255))
+        p.rect(x + 4, y + 2, 3, 6, (120, 32, 36, 255))
 
 
-def draw_role_mark(p, spec, x, y):
+def draw_role_mark(p, spec, x, y, action="idle"):
     if spec["role"] == "fisher":
         p.vline(x + 8, y, y + 8, WOOD_D)
     elif spec["role"] == "boat":
@@ -927,6 +992,9 @@ def draw_role_mark(p, spec, x, y):
         p.set(x - 6, y + 1, LEAF)
     elif spec["role"] == "visitor":
         p.rect(x + 5, y + 2, 4, 6, (96, 64, 40, 255))
+    elif spec["role"] == "pirate" and action != "strike":
+        p.vline(x + 8, y + 4, y + 12, (186, 190, 184, 255))
+        p.set(x + 8, y + 3, (92, 64, 40, 255))
 
 
 def draw_front(p, spec, action):
@@ -946,6 +1014,11 @@ def draw_front(p, spec, action):
         p.rect(x + 7, foot - 20, 3, 8, tunic_d)
         p.rect(x - 5, foot - 18, 10, 7, WOOD)
         p.hline(x - 5, x + 4, foot - 15, WOOD_L)
+    elif action == "strike":
+        p.rect(x - 10, foot - 22, 3, 9, tunic)
+        p.rect(x - 10, foot - 14, 3, 2, SKIN)
+        p.rect(x + 5, foot - 30, 3, 8, tunic_d)
+        p.rect(x + 5, foot - 32, 3, 3, SKIN)
     else:
         p.rect(x - 10, foot - 22 + step, 3, 9, tunic)
         p.rect(x - 10, foot - 14 + step, 3, 2, SKIN)
@@ -957,7 +1030,11 @@ def draw_front(p, spec, action):
     draw_hair(p, spec, x, foot - 38, True)
     p.rect(x - 4, foot - 32, 2, 2, INK)
     p.rect(x + 1, foot - 32, 2, 2, INK)
-    draw_role_mark(p, spec, x, foot - 22)
+    draw_role_mark(p, spec, x, foot - 22, action)
+    if action == "strike":
+        for i in range(11):
+            p.set(x - 2 + i, foot - 28 + i, (214, 218, 208, 255))
+            p.set(x - 1 + i, foot - 27 + i, (150, 156, 150, 255))
 
 
 def draw_back(p, spec, action):
@@ -976,6 +1053,8 @@ def draw_back(p, spec, action):
             p.ellipse(x, foot - 37, 8, 2, (214, 170, 80, 255))
         elif spec["hat"] == "cap":
             p.rect(x - 6, foot - 40, 12, 4, (48, 72, 96, 255))
+        elif spec["hat"] == "bandana":
+            p.rect(x - 6, foot - 40, 12, 4, (154, 42, 44, 255))
     p.rect(x - 7, foot - 24, 11, 14, tunic)
     p.rect(x + 4, foot - 24, 3, 14, tunic_d)
 
@@ -1014,10 +1093,21 @@ def draw_side(p, spec, action):
         p.rect(x - 1, foot - 40, 6, 4, (196, 148, 64, 255))
     elif spec["hat"] == "cap":
         p.rect(x - 4, foot - 40, 10, 3, (48, 72, 96, 255))
-    if spec["role"] == "visitor":
+    elif spec["hat"] == "bandana":
+        p.rect(x - 3, foot - 41, 10, 3, (154, 42, 44, 255))
+        p.rect(x - 5, foot - 38, 3, 5, (120, 32, 36, 255))
+    if action == "strike" and spec["role"] == "pirate":
+        p.rect(x + 4, foot - 26, 3, 6, tunic_d)
+        p.rect(x + 5, foot - 28, 2, 3, SKIN)
+        p.hline(x + 6, x + 15, foot - 27, (214, 218, 208, 255))
+        p.hline(x + 6, x + 14, foot - 26, (150, 156, 150, 255))
+    elif spec["role"] == "visitor":
         p.rect(x - 6, foot - 22, 4, 6, (96, 64, 40, 255))
     elif spec["role"] == "fisher":
         p.vline(x + 8, foot - 28, foot - 16, WOOD_D)
+    elif spec["role"] == "pirate":
+        p.vline(x + 8, foot - 18, foot - 8, (186, 190, 184, 255))
+        p.hline(x + 6, x + 10, foot - 18, (92, 64, 40, 255))
 
 
 def draw_collapsed(p, spec, view):
@@ -1143,6 +1233,23 @@ def build_terrain(world: World):
             terrain.append(tile)
             foam.append(sum(watery) if tile == "water" else 0)
 
+    # A few grass tiles beside the first sand row become beach, so the shore
+    # is not one tile wide everywhere. Paths were chosen before this pass.
+    widened = []
+    for y in range(height):
+        for x in range(width):
+            index = y * width + x
+            if terrain[index] not in ("grass", "grass_b", "grass_flower") or (x * 3 + y) % 4:
+                continue
+            for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height and terrain[ny * width + nx] in ("sand", "sand_b"):
+                    widened.append(index)
+                    break
+    for index in widened:
+        x, y = index % width, index // width
+        terrain[index] = "sand_b" if (x + y) % 2 else "sand"
+
     places = {(place["x"], place["y"]) for place in world.config["places"]}
     clear = set()
     for x, y in places:
@@ -1252,6 +1359,8 @@ def main():
     add_building("shore", (32, 14), [], {"sound": boats(False), "leaking": boats(True)}, "sound")
     add_building("nets", (22, 44), [], {"sound": net_rack(False), "torn": net_rack(True)}, "sound")
     add_building("garden", (30, 40), [], {"ready": garden()}, "ready")
+    add_building("west_garden", (30, 40), [], {"ready": garden()}, "ready")
+    add_building("orchard", (32, 48), [], {"ready": orchard()}, "ready")
     add_building("fire", (22, 40), [], {"lit": hearth(True), "resting": hearth(False)}, "lit")
     add_building("bench", (24, 28), [], {"ready": flower_bench()}, "ready")
     add_building("food_center", (28, 48), [], {"ready": food_stall()}, "ready")
@@ -1301,6 +1410,25 @@ def main():
             "actions": actions,
         }
 
+    raid_crew = {}
+    for pid, spec in RAID_CREW.items():
+        actions = {}
+        for action in ("idle", "walk", "carry", "strike"):
+            actions[action] = {}
+            for view in ("n", "e", "s", "w"):
+                pix = villager(spec, action, view)
+                actions[action][view] = save(root, "characters", f"char_{pid}_{action}_{view}", pix, store)
+        raid_crew[pid] = {"size": [32, 48], "anchor": [16, 44], "actions": actions}
+    boat = pirate_boat()
+    raid = {
+        "boat": {
+            "file": save(root, "buildings", "pirate_boat", boat, store),
+            "size": [boat.w, boat.h],
+            "anchor": [14, 44],
+        },
+        "crew": raid_crew,
+    }
+
     scenery = []
     files = {"tree": "tiles/tree_a.png", "bush": "tiles/bush.png", "rock": "tiles/rock.png", "reed": "tiles/reed.png"}
     anchors = {"tree": [20, 64], "bush": [16, 22], "rock": [18, 24], "reed": [8, 28]}
@@ -1328,9 +1456,19 @@ def main():
         "resources": resources,
         "characters": characters,
         "scenery": scenery,
+        "raid": raid,
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     preview(manifest, store, world)
+    strip = Pix(420, 80)
+    strip.fill((32, 48, 52, 255))
+    strip.blit(store[raid["boat"]["file"]], 8, 8)
+    x = 120
+    for pid in RAID_CREW:
+        for action in ("idle", "walk", "strike", "carry"):
+            strip.blit(store[raid["crew"][pid]["actions"][action]["s"]], x, 16)
+            x += 36
+    write_png(Path("/tmp/pirate-raid-art.png"), scale(strip, 4))
     print(f"Wrote {len(store)} assets and {root / 'manifest.json'}")
 
 

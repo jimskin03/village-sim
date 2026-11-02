@@ -38,6 +38,13 @@ VillageView.sync = (state, world) => {
     minute: state.minute ?? 1080,
     weather: state.weather,
     festival: state.festival,
+    pirate: state.pirate,
+    agents: (state.agents || []).map((agent) => ({
+      id: agent.id,
+      x: agent.x,
+      y: agent.y,
+      collapsedUntil: agent.collapsed_until || 0,
+    })),
   };
 };
 
@@ -97,6 +104,12 @@ function assetFiles(manifest) {
     for (const file of Object.values(item.states || {})) files.add(file);
   }
   for (const person of Object.values(manifest.characters)) {
+    for (const views of Object.values(person.actions)) {
+      for (const file of Object.values(views)) files.add(file);
+    }
+  }
+  if (manifest.raid?.boat?.file) files.add(manifest.raid.boat.file);
+  for (const person of Object.values(manifest.raid?.crew || {})) {
     for (const views of Object.values(person.actions)) {
       for (const file of Object.values(views)) files.add(file);
     }
@@ -364,6 +377,266 @@ function actorFoot(el, inner) {
   };
 }
 
+// Wall-clock raid. The boat crosses the eastern bay, the crew runs inland,
+// and the victims stay on their feet until the crew reaches them.
+const RAID_BEATS = [
+  ["approach", 2400],
+  ["ashore", 550],
+  ["inland", 3200],
+  ["strike", 1600],
+  ["loot", 1800],
+];
+const RAID_SHOWN = RAID_BEATS.reduce((sum, beat) => sum + beat[1], 0);
+const RAID_LEAVE = { run: 2000, sail: 2600 };
+const RAID_CREW = ["rake", "brin"];
+
+VillageView.raidBeats = RAID_BEATS;
+VillageView.raidLeave = RAID_LEAVE;
+VillageView.raidShow = {
+  on: false,
+  started: 0,
+  leaving: false,
+  leaveAt: 0,
+  targets: [],
+};
+
+function ease(u) {
+  u = Math.max(0, Math.min(1, u));
+  return u * u * (3 - 2 * u);
+}
+
+function raidLanding() {
+  const jetty = placeOf("jetty");
+  if (!jetty) return { x: 30.25 * 32, y: 13.7 * 32 };
+  const foot = ground(jetty);
+  return { x: foot.x + 88, y: foot.y + 6 };
+}
+
+function raidShore() {
+  const jetty = placeOf("jetty");
+  return jetty ? ground(jetty) : { x: 27.5 * 32, y: 13.5 * 32 };
+}
+
+function raidPhase(elapsed) {
+  let cursor = 0;
+  for (const [name, dur] of RAID_BEATS) {
+    if (elapsed < cursor + dur) return { name, u: (elapsed - cursor) / dur };
+    cursor += dur;
+  }
+  return { name: "hold", u: 1 };
+}
+
+function facing(dx, dy) {
+  if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return "s";
+  return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "e" : "w") : (dy > 0 ? "s" : "n");
+}
+
+VillageView.notePirate = (now, active, agents) => {
+  const show = VillageView.raidShow;
+  if (active && show.leaving) {
+    show.on = false;
+    show.leaving = false;
+  }
+  if (active && !show.on) {
+    show.on = true;
+    show.started = now;
+    show.leaving = false;
+    show.leaveAt = 0;
+    const down = (agents || []).filter((agent) => agent.collapsedUntil > 0);
+    down.sort((a, b) => b.collapsedUntil - a.collapsedUntil || String(a.id).localeCompare(String(b.id)));
+    show.targets = down.slice(0, 2).map((agent) => ({
+      id: agent.id,
+      x: (agent.x + 0.5) * 32,
+      y: (agent.y + 0.5) * 32,
+    }));
+  }
+  if (!active && show.on && !show.leaving && now - show.started >= RAID_SHOWN) {
+    show.leaving = true;
+    show.leaveAt = now;
+  }
+};
+
+function raidGoals() {
+  const goals = VillageView.raidShow.targets.map((target) => ({ ...target }));
+  if (goals.length < 2) {
+    const food = placeOf("food_center");
+    const point = food ? ground(food) : { x: 12.5 * 32, y: 15.5 * 32 };
+    goals.push({ id: null, x: point.x, y: point.y });
+  }
+  return goals;
+}
+
+VillageView.raidFrame = (now) => {
+  const show = VillageView.raidShow;
+  if (!show.on) return null;
+  if (show.leaving && now - show.leaveAt > RAID_LEAVE.run + RAID_LEAVE.sail) {
+    show.on = false;
+    show.leaving = false;
+    return null;
+  }
+  if (VillageView.reduced && show.leaving) {
+    show.on = false;
+    show.leaving = false;
+    return null;
+  }
+  const landing = raidLanding();
+  const shore = raidShore();
+  const goals = raidGoals();
+  let phase;
+  if (VillageView.reduced) phase = { name: "hold", u: 1 };
+  else if (show.leaving) {
+    const t = now - show.leaveAt;
+    phase = t < RAID_LEAVE.run
+      ? { name: "return", u: t / RAID_LEAVE.run }
+      : { name: "sail", u: (t - RAID_LEAVE.run) / RAID_LEAVE.sail };
+  } else phase = raidPhase(Math.max(0, now - show.started));
+
+  const sea = { x: 1280 + 96, y: landing.y - 28 };
+  let boat = { x: landing.x, y: landing.y };
+  if (phase.name === "approach") {
+    const u = ease(phase.u);
+    boat = { x: sea.x + (landing.x - sea.x) * u, y: sea.y + (landing.y - sea.y) * u };
+  } else if (phase.name === "sail") {
+    const u = ease(phase.u);
+    boat = { x: landing.x + (sea.x - landing.x) * u, y: landing.y + (sea.y - landing.y) * u };
+  }
+
+  const crew = RAID_CREW.map((id, index) => {
+    const goal = goals[Math.min(index, goals.length - 1)];
+    const deck = { x: boat.x + 24 + index * 18, y: boat.y - 8 };
+    const foot = { x: shore.x + (index ? 14 : -2), y: shore.y + (index ? 8 : -4) };
+    const delay = index * 0.14;
+    const runU = ease(Math.max(0, Math.min(1, (phase.u - delay) / (1 - delay))));
+    let point = deck;
+    let action = "idle";
+    let dir = "w";
+    const aboard = phase.name === "approach" || phase.name === "sail" || phase.name === "ashore";
+    if (phase.name === "approach" || phase.name === "sail") {
+      point = deck;
+      dir = phase.name === "sail" ? "e" : "w";
+    } else if (phase.name === "ashore") {
+      const u = ease(phase.u);
+      point = { x: deck.x + (foot.x - deck.x) * u, y: deck.y + (foot.y - deck.y) * u };
+      action = "walk";
+      dir = "w";
+    } else if (phase.name === "inland") {
+      point = { x: foot.x + (goal.x - foot.x) * runU, y: foot.y + (goal.y - foot.y) * runU };
+      action = "walk";
+      dir = facing(goal.x - foot.x, goal.y - foot.y);
+    } else if (phase.name === "strike") {
+      point = { x: goal.x, y: goal.y };
+      action = Math.floor(now / 180) % 2 === 0 ? "strike" : "idle";
+      dir = "s";
+    } else if (phase.name === "loot" || phase.name === "hold") {
+      point = { x: goal.x + Math.sin(now / 280 + index) * 3, y: goal.y };
+      action = "carry";
+      dir = "s";
+    } else if (phase.name === "return") {
+      const back = ease(Math.max(0, Math.min(1, (phase.u - delay) / (1 - delay))));
+      if (back < 0.78) {
+        const u = back / 0.78;
+        point = { x: goal.x + (foot.x - goal.x) * u, y: goal.y + (foot.y - goal.y) * u };
+        dir = facing(foot.x - goal.x, foot.y - goal.y);
+      } else {
+        const u = (back - 0.78) / 0.22;
+        const deckAtShore = { x: landing.x + 24 + index * 18, y: landing.y - 8 };
+        point = { x: foot.x + (deckAtShore.x - foot.x) * u, y: foot.y + (deckAtShore.y - foot.y) * u };
+        dir = "e";
+      }
+      action = "carry";
+    }
+    return {
+      id,
+      x: point.x,
+      y: point.y,
+      action,
+      dir,
+      sort: point.y + (aboard ? 16 : 0),
+    };
+  });
+
+  const fallen = ["strike", "loot", "hold", "return", "sail"].includes(phase.name);
+  const food = placeOf("food_center");
+  return {
+    phase: phase.name,
+    u: phase.u,
+    landing,
+    boat,
+    crew,
+    targets: show.targets,
+    down: fallen ? show.targets.filter((target) => target.id).map((target) => target.id) : [],
+    loot: food ? ground(food) : null,
+  };
+};
+
+VillageView.raidPose = (actor, dir, raid) => {
+  if (!raid?.targets?.some((target) => target.id === actor)) return null;
+  const person = VillageView.manifest?.characters?.[actor] || VillageView.manifest?.characters?.visitor;
+  if (!person) return null;
+  const action = raid.down.includes(actor) ? "collapsed" : "idle";
+  const views = person.actions[action] || {};
+  return views[dir] || views.s || null;
+};
+
+function drawRaidSea(ctx, raid, seconds) {
+  if (!raid || (raid.phase !== "approach" && raid.phase !== "sail")) return;
+  const stern = raid.phase === "sail" ? -1 : 1;
+  for (let i = 0; i < 4; i++) {
+    const x = Math.round(raid.boat.x + stern * (22 + i * 16));
+    const y = Math.round(raid.boat.y + 6 + Math.sin(seconds * 3 + i) * 2);
+    ctx.fillStyle = `rgba(214, 238, 228, ${0.42 - i * 0.08})`;
+    ctx.fillRect(x, y, 16 - i * 2, 1);
+    ctx.fillStyle = "rgba(8, 32, 44, 0.28)";
+    ctx.fillRect(x, y + 1, 14 - i * 2, 1);
+  }
+  if (raid.phase === "approach" && raid.u > 0.82) {
+    ctx.fillStyle = "rgba(232, 244, 236, 0.85)";
+    ctx.fillRect(Math.round(raid.boat.x - 2), Math.round(raid.boat.y - 2), 3, 2);
+    ctx.fillRect(Math.round(raid.boat.x + 4), Math.round(raid.boat.y - 5), 2, 2);
+  }
+}
+
+function drawRaidHavoc(ctx, raid, now) {
+  if (!raid) return;
+  if (raid.phase === "ashore") {
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = "rgba(232, 244, 236, 0.8)";
+      ctx.fillRect(
+        Math.round(raid.landing.x - 8 + i * 4),
+        Math.round(raid.landing.y - raid.u * 10 - (i % 3) * 2),
+        2,
+        2,
+      );
+    }
+  }
+  if (raid.phase === "strike") {
+    for (const member of raid.crew) {
+      const swing = Math.sin(now / 70);
+      ctx.fillStyle = "rgba(255, 246, 220, 0.95)";
+      for (let i = 0; i < 9; i++) {
+        ctx.fillRect(Math.round(member.x - 10 + i * 3), Math.round(member.y - 30 - swing * 7 + (i % 3)), 2, 2);
+      }
+    }
+    for (const target of raid.targets) {
+      ctx.fillStyle = `rgba(176, 148, 102, ${0.45 - raid.u * 0.15})`;
+      ctx.fillRect(Math.round(target.x - 8), Math.round(target.y - 3), 5, 3);
+      ctx.fillRect(Math.round(target.x + 3), Math.round(target.y - 7), 4, 3);
+      ctx.fillRect(Math.round(target.x - 2), Math.round(target.y - 11), 3, 3);
+    }
+  }
+  if ((raid.phase === "loot" || raid.phase === "return") && raid.loot) {
+    const u = raid.phase === "return" ? 1 : raid.u;
+    for (const member of raid.crew) {
+      const x = raid.loot.x + (member.x - raid.loot.x) * u;
+      const y = raid.loot.y + (member.y - 18 - raid.loot.y) * u;
+      ctx.fillStyle = "#5c3a24";
+      ctx.fillRect(Math.round(x), Math.round(y), 8, 6);
+      ctx.fillStyle = "#d2b07a";
+      ctx.fillRect(Math.round(x) + 1, Math.round(y), 6, 2);
+    }
+  }
+}
+
 function shadow(ctx, x, y, rx) {
   const shade = ctx.createRadialGradient(x, y, 1, x, y, rx);
   shade.addColorStop(0, "rgba(10, 27, 27, 0.36)");
@@ -620,9 +893,18 @@ function drawWorld(now) {
   if (!canvas || !inner || !VillageView.ready) return;
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
+  ctx.save();
   const seconds = VillageView.reduced ? 0 : now / 1000;
+  VillageView.notePirate(
+    now,
+    Boolean(VillageView.sim?.pirate),
+    VillageView.sim?.agents || [],
+  );
+  const raid = VillageView.raidFrame(now);
+  if (raid?.phase === "strike" && !VillageView.reduced) ctx.translate(Math.round(Math.sin(now / 45)), 0);
   ctx.drawImage(VillageView.terrain[0], 0, 0);
   drawWater(ctx, seconds);
+  drawRaidSea(ctx, raid, seconds);
   drawDoorsteps(ctx);
   const manifest = VillageView.manifest;
   const items = [];
@@ -636,6 +918,36 @@ function drawWorld(now) {
     const point = ground(place);
     items.push({ y: point.y, z: 1, file: buildingFile(item), x: point.x, gy: point.y, anchor: item.anchor, shade: 22 });
   }
+  const raidBoat = manifest.raid?.boat;
+  if (raid && raidBoat && VillageView.images.get(raidBoat.file)) {
+    const bob = VillageView.reduced ? 0 : Math.sin(seconds * 2.4) * (raid.phase === "approach" || raid.phase === "sail" ? 1.4 : 0.4);
+    items.push({
+      y: raid.boat.y,
+      z: 1,
+      file: raidBoat.file,
+      x: raid.boat.x,
+      gy: raid.boat.y + bob,
+      anchor: raidBoat.anchor,
+      shade: 16,
+    });
+    for (const member of raid.crew) {
+      const person = manifest.raid.crew?.[member.id];
+      if (!person) continue;
+      let action = member.action;
+      if (action === "walk" && !VillageView.reduced && Math.floor(now / 160) % 2 === 1) action = "idle";
+      const file = person.actions[action]?.[member.dir] || person.actions.idle?.[member.dir];
+      if (!file) continue;
+      items.push({
+        y: member.sort,
+        z: 4,
+        file,
+        x: member.x,
+        gy: member.y,
+        anchor: person.anchor,
+        shade: 6,
+      });
+    }
+  }
   for (const item of manifest.resources) {
     const place = placeOf(item.place);
     if (!place) continue;
@@ -644,7 +956,8 @@ function drawWorld(now) {
   }
   for (const el of document.querySelectorAll("#villagers .sprite, .festival-visitor")) {
     const point = actorFoot(el, inner);
-    const file = spriteFile(el, now);
+    const posed = VillageView.raidPose(el.dataset.actor, el.dataset.dir || "s", raid);
+    const file = posed || spriteFile(el, now);
     if (!point || !file) continue;
     const person = manifest.characters[el.dataset.actor] || manifest.characters.visitor;
     items.push({
@@ -654,7 +967,7 @@ function drawWorld(now) {
       x: point.x,
       gy: point.y,
       anchor: person.anchor,
-      shade: el.dataset.action === "collapsed" ? 11 : 6,
+      shade: (posed && raid.down.includes(el.dataset.actor)) || (!posed && el.dataset.action === "collapsed") ? 11 : 6,
     });
   }
   const lamps = lanterns();
@@ -676,7 +989,9 @@ function drawWorld(now) {
     ctx.drawImage(image, Math.round(item.x - item.anchor[0]), Math.round(item.gy - item.anchor[1]));
   }
   drawSmoke(ctx, seconds);
+  drawRaidHavoc(ctx, raid, now);
   drawLighting(ctx, seconds, lamps);
+  ctx.restore();
 }
 
 function frame(now) {
