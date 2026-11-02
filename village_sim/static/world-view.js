@@ -38,6 +38,7 @@ VillageView.sync = (state, world) => {
     minute: state.minute ?? 1080,
     weather: state.weather,
     festival: state.festival,
+    pirate: state.pirate,
   };
 };
 
@@ -635,6 +636,17 @@ function drawWorld(now) {
     if (!place) continue;
     const point = ground(place);
     items.push({ y: point.y, z: 1, file: buildingFile(item), x: point.x, gy: point.y, anchor: item.anchor, shade: 22 });
+  }
+  if (VillageView.sim?.pirate) {
+    const shore = manifest.buildings.find((item) => item.id === "shore");
+    const jetty = placeOf("jetty");
+    if (shore && jetty && shore.states.sound) {
+      const point = ground(jetty);
+      items.push({
+        y: point.y + 36, z: 1, file: shore.states.sound,
+        x: point.x + 78, gy: point.y + 36, anchor: shore.anchor, shade: 18,
+      });
+    }
   }
   for (const item of manifest.resources) {
     const place = placeOf(item.place);

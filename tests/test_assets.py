@@ -105,3 +105,46 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(buildings["nets"], {"sound", "torn"})
         self.assertEqual(buildings["well"], {"ready", "empty", "fouled"})
         self.assertEqual(buildings["rain_barrel"], {"ready", "empty", "fouled"})
+
+    def test_coast_keeps_open_water_and_a_varied_beach(self):
+        width, height = self.world["width"], self.world["height"]
+        terrain = self.manifest["terrain"]
+        solid = sum(tile != "water" for tile in terrain)
+        self.assertEqual(solid, 645)
+        self.assertEqual(solid, round(0.701 * width * height))
+        for x in range(width):
+            self.assertEqual(terrain[x], "water")
+            self.assertEqual(terrain[(height - 1) * width + x], "water")
+        for y in range(height):
+            self.assertEqual(terrain[y * width], "water")
+            self.assertEqual(terrain[y * width + width - 1], "water")
+
+        def tile(x, y):
+            return terrain[y * width + x]
+
+        for point in ((20, 19), (21, 20), (34, 13), (36, 12)):
+            self.assertEqual(tile(*point), "water", point)
+        places = {place["id"]: place for place in self.world["places"]}
+        for name in ("garden", "west_garden", "orchard"):
+            self.assertLess(places[name]["x"], 12)
+        sand = {"sand", "sand_b"}
+
+        def is_sand(x, y):
+            return 0 <= x < width and 0 <= y < height and tile(x, y) in sand
+
+        def is_water(x, y):
+            return 0 <= x < width and 0 <= y < height and tile(x, y) == "water"
+
+        one = two = False
+        for y in range(height):
+            for x in range(width):
+                if not is_sand(x, y):
+                    continue
+                for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+                    if not is_water(x + dx, y + dy):
+                        continue
+                    if is_sand(x - dx, y - dy):
+                        two = True
+                    else:
+                        one = True
+        self.assertTrue(one and two)

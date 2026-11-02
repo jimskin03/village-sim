@@ -13,7 +13,7 @@ from typing import Callable
 
 from .cognition.memory import MemoryStore, memory_view
 from .cognition import planning, conversations, reflection
-from . import visitors, survival, work
+from . import visitors, survival, work, events
 from .decisions import Action, daily_plan, decide
 from .world import World
 
@@ -121,6 +121,9 @@ class Agent:
     water: float = 100
     health: float = 100
     collapsed_until: int = 0
+    happiness: int = 60
+    happiness_bonus: int = 0
+    happiness_bonus_until: int = 0
 
 
 class Simulation:
@@ -140,6 +143,8 @@ class Simulation:
         self.weather = "clear"
         self.weather_until = 0
         self.festival_until = 0
+        self.calm_until = 0
+        self.pirate_until = 0
         self.agents: dict[str, Agent] = {}
         self.residents: dict[str, Agent] = {}
         self.pending: dict[str, Action] = {}
@@ -369,6 +374,8 @@ class Simulation:
             "minute": self.minute,
             "weather": self.weather,
             "festival": self.step < self.festival_until,
+            "pirate": self.step < self.pirate_until,
+            "calm": self.step < self.calm_until,
             "pantry": dict(self.pantry),
             **self.survival_view(),
             "food": agent.food, "water": agent.water, "health": agent.health,
@@ -511,42 +518,8 @@ class Simulation:
         return fitted
 
     def inject(self, kind: str):
-        if kind == "storm":
-            self.weather = "storm"
-            self.weather_until = self.step + 12
-            self.pantry["net_condition"] = "torn"
-            self.event(
-                "Rain tears the village net and closes the jetty. The villagers head for shelter.",
-                "weather",
-                self.agents,
-            )
-        elif kind == "festival":
-            if self.step < self.festival_until:
-                return
-            self.festival_until = self.step + 16
-            fish, herbs = min(2, self.pantry["fish"]), min(1, self.pantry["herbs"])
-            self.pantry["fish"] -= fish
-            self.pantry["herbs"] -= herbs
-            x, y = self.world.point("guest_home")
-            self.visitor = {"id": "visitor", "name": "Wren", "place": "guest_home", "x": x, "y": y}
-            text = f"Wren arrived at the guest cottage for the festival; everyone shared {fish} fish and {herbs} herb bundles."
-            self.event(text, "festival", self.agents)
-            for first in self.agents.values():
-                for other in self.agents.values():
-                    if first.id != other.id:
-                        first.relationships[other.id] = f"{first.name} and {other.name} shared Wren’s lantern festival."
-        elif kind == "clear":
-            self.weather = "clear"
-            self.weather_until = self.festival_until = 0
-            self.visitor = None
-            self.event(
-                "The bay is quiet again. Everyone returns to their own rhythm.",
-                "weather",
-                self.agents,
-            )
-        else:
-            raise ValueError("Unknown event; choose storm, festival, or clear")
-        conversations.update(self, advance=False)
+        if events.inject(self, kind):
+            conversations.update(self, advance=False)
 
     def tick(self):
         centers_before = survival.centers(self)
@@ -562,10 +535,11 @@ class Simulation:
             )
         if self.festival_until and self.step == self.festival_until:
             self.event(
-                "The last festival lantern drifts away. Daily life resumes.",
+                "The last festival lantern drifts away. The extra cheer fades, and daily life resumes.",
                 "festival",
                 self.agents,
             )
+        events.expire(self)
         self.pantry["hearth_lit"] = self.minute >= 18 * 60 or self.minute < 6 * 60
         if self.festival_until and self.step >= self.festival_until:
             self.visitor = None
@@ -582,6 +556,7 @@ class Simulation:
             if previous_hour != self.minute // 60 and self.minute // 60 in (0, 6, 10, 13, 15, 18, 21, 23):
                 self.request_replan(agent.id, "schedule_changed")
         survival.tick(self)
+        events.rest(self)
         if self.minute >= 18 * 60 and not any(s["day"] == self.day for s in self.suppers):
             self._supper()
         conversations.update(self)
@@ -776,7 +751,7 @@ class Simulation:
         hour = self.minute // 60
         if hour < 6 or hour >= 23:
             return []
-        facts = [m for m in agent.memory[-8:] if m["kind"] in ("work", "supper", "weather", "festival", "reflection", "survival", "collapse", "recovery")]
+        facts = [m for m in agent.memory[-8:] if m["kind"] in ("work", "supper", "weather", "festival", "pirate", "reflection", "survival", "collapse", "recovery")]
         if not facts:
             return []
         fact = facts[-1]["text"]
@@ -865,6 +840,7 @@ class Simulation:
             "present_villagers": [
                 {"id": a.id, "name": a.name, "x": a.x, "y": a.y,
                  "food": a.food, "water": a.water, "health": a.health,
+                 "happiness": events.shown_happiness(a, self.step),
                  "collapsed": survival.collapsed(a),
                  "busy": bool(conversations.active(self, a.id) or conversations.meeting_action(self, a.id)),
                  "work_completed": any(g["id"] == "work" and g["completed"] for g in a.goals)}
@@ -883,6 +859,8 @@ class Simulation:
             "time": f"{self.minute // 60:02}:{self.minute % 60:02}",
             "weather": self.weather,
             "festival": self.step < self.festival_until,
+            "pirate": self.step < self.pirate_until,
+            "calm": self.step < self.calm_until,
             "pantry": dict(self.pantry),
             **self.survival_view(),
             "suppers": copy.deepcopy(self.suppers[-7:]),

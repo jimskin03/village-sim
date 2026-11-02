@@ -543,12 +543,20 @@ async function copyVisitorJoinPrompt() {
   }
 }
 $("#copy-join-prompt").addEventListener("click", copyVisitorJoinPrompt);
+function shownHappiness(agent) {
+  if (!Number.isFinite(agent?.happiness)) return null;
+  const bonus = Number.isFinite(agent.happiness_bonus) && state?.step < agent.happiness_bonus_until
+    ? agent.happiness_bonus : 0;
+  return Math.max(0, Math.min(100, agent.happiness + bonus));
+}
 function survivalBars(agent) {
   if (![agent.food, agent.water, agent.health].every(Number.isFinite)) return "";
-  return `<span class="survival-bars">${["food", "water", "health"].map((stat) => {
-    const value = Math.max(0, Math.min(100, agent[stat]));
-    return `<span class="survival-stat${value < 25 ? " low" : ""}"><span>${stat} ${Math.round(value)}</span><meter min="0" max="100" low="25" high="60" optimum="100" value="${value}" aria-label="${stat}">${Math.round(value)} / 100</meter></span>`;
-  }).join("")}</span>`;
+  const rows = ["food", "water", "health"].map((stat) => [stat, Math.max(0, Math.min(100, agent[stat]))]);
+  const happiness = shownHappiness(agent);
+  if (happiness != null) rows.push(["happiness", happiness]);
+  return `<span class="survival-bars">${rows.map(([stat, value]) =>
+    `<span class="survival-stat${value < 25 ? " low" : ""}"><span>${stat} ${Math.round(value)}</span><meter min="0" max="100" low="25" high="60" optimum="100" value="${value}" aria-label="${stat}">${Math.round(value)} / 100</meter></span>`
+  ).join("")}</span>`;
 }
 function renderCards() {
   const cards = $("#resident-cards");

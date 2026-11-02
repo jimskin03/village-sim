@@ -38,7 +38,7 @@ from __future__ import annotations
 import copy
 import re
 
-from . import survival, work
+from . import survival, work, events
 from .cognition import planning
 from .cognition.memory import memory_view
 from .cognition.reflection import bump_trust
@@ -676,13 +676,15 @@ def observe(sim, vid) -> dict:
         "step": sim.step, "day": sim.day, "minute": sim.minute,
         "time": f"{sim.minute // 60:02}:{sim.minute % 60:02}",
         "weather": sim.weather, "festival": sim.step < sim.festival_until,
+        "pirate": sim.step < sim.pirate_until, "calm": sim.step < sim.calm_until,
         "cognition_mode": sim.cognition_mode, "pantry": dict(sim.pantry),
         **sim.survival_view(),
         "you": public(visitor), "here": _here(sim, visitor),
         "villagers": [{
             "id": a.id, "name": a.name, "role": a.role, "persona": a.persona, "activity": a.activity,
             "mood": a.mood, "destination": a.destination, "x": a.x, "y": a.y,
-            "food": a.food, "water": a.water, "health": a.health, "collapsed": bool(a.collapsed_until),
+            "food": a.food, "water": a.water, "health": a.health,
+            "happiness": events.shown_happiness(a, sim.step), "collapsed": bool(a.collapsed_until),
             "distance": _distance(visitor, a), "asleep": _asleep(a),
             "trust_in_you": visitor["trust"].get(a.id, 0),
         } for a in sim.agents.values()],

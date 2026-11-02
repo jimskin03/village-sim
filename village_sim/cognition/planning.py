@@ -11,7 +11,7 @@ MODES = ("rules", "hybrid")
 
 
 def legal_actions(agent, observation: dict) -> list[dict]:
-    from .. import survival
+    from .. import survival, work
     suggested = observation["suggested_action"]
     routine = {"action": "routine", "location": suggested["place"], "target": None,
                "place": suggested["place"], "activity": suggested["activity"]}
@@ -27,14 +27,15 @@ def legal_actions(agent, observation: dict) -> list[dict]:
     if (observation["weather"] == "storm" or observation["festival"]
             or observation["minute"] // 60 < 6 or observation["minute"] // 60 >= 23):
         return actions
-    work = {
+    gardens = [(place, "tending the garden") for place in work.TASKS["garden"]["places"]]
+    tasks = {
         "fisher": [("jetty", "fishing"), ("shore", "fishing"), ("nets", "mending nets")],
-        "gardener": [("garden", "tending the garden")],
+        "gardener": gardens,
         "boatwright": [("shore", "checking the boats"), ("nets", "repairing tackle")],
     }[agent.role]
-    work = list(dict.fromkeys([*work, ("jetty", "fishing"), ("garden", "tending the garden"), ("nets", "mending nets")]))
+    tasks = list(dict.fromkeys([*tasks, ("jetty", "fishing"), *gardens, ("nets", "mending nets")]))
     if 6 <= observation["minute"] // 60 < 18:
-        for place, activity in work:
+        for place, activity in tasks:
             actions.append({"action": "work", "location": place, "target": None,
                             "place": place, "activity": activity})
     for place in dict.fromkeys((agent.home, "bench", "fire")):

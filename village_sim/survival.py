@@ -2,6 +2,7 @@
 
 import math
 
+from . import work
 from .decisions import Action
 
 FOOD_DRAIN = WATER_DRAIN = 0.5
@@ -24,6 +25,18 @@ def clamp(value):
 def collapsed(agent):
     # A nonzero deadline remains collapsed until tick explicitly recovers them.
     return agent.collapsed_until > 0
+
+
+def knock_out(sim, agent, steps, text=None):
+    """Drop a villager where they stand. Recovery still uses the restart health."""
+    agent.health = 0
+    agent.collapsed_until = sim.step + steps
+    agent.activity = "collapsed"
+    agent.speech = agent.thought = agent.result = None
+    sim.pending.pop(agent.id, None)
+    if text is None:
+        text = f"{agent.name} collapsed and must recover for {steps} step."
+    sim.event(text, "collapse", [agent.id], significant=True)
 
 
 def initial_sources():
@@ -75,12 +88,7 @@ def tick(sim):
             agent.health = clamp(agent.health + 0.5)
         if agent.health == 0 and not collapsed(agent):
             duration = math.ceil(COLLAPSE_MINUTES / sim.world.config["minutes_per_step"])
-            agent.collapsed_until = sim.step + duration
-            agent.activity = "collapsed"
-            agent.speech = agent.thought = agent.result = None
-            sim.pending.pop(agent.id, None)
-            sim.event(f"{agent.name} collapsed and must recover for {duration} step.",
-                      "collapse", [agent.id], significant=True)
+            knock_out(sim, agent, duration)
         if agent.health < 30:
             agent.mood = "tired"
 
@@ -108,7 +116,8 @@ def personal_action(agent, observation):
     if agent.food <= 55 and (observation["pantry"]["fish"] or observation["pantry"]["herbs"]):
         return Action(FOOD_CENTER, "eat")
     if agent.food <= 40:
-        return Action("garden", "gathering herbs for shared food")
+        return Action(nearest(agent, observation, work.TASKS["garden"]["places"]),
+                      "gathering herbs for shared food")
     return None
 
 
@@ -146,7 +155,8 @@ def suggested_action(agent, observation):
                 activity = "mending the torn village net" if places == ["nets"] else "fishing for shared food"
                 units = FISH_FOOD
             else:
-                places, activity, units = ["garden"], "gathering herbs for shared food", HERB_FOOD
+                places = list(work.TASKS["garden"]["places"])
+                activity, units = "gathering herbs for shared food", HERB_FOOD
         points = {p["id"]: p for p in observation["places"]}
         ranked = sorted(free, key=lambda a: (
             min(abs(a["x"] - points[p]["x"]) + abs(a["y"] - points[p]["y"]) for p in places), a["id"]))

@@ -94,6 +94,9 @@ LINKS = (
     ("shore", "water_center"),
     ("water_center", "fire"),
     ("bench", "jetty"),
+    ("guest_home", "west_garden"),
+    ("west_garden", "orchard"),
+    ("orchard", "garden"),
 )
 
 
@@ -626,6 +629,26 @@ def garden():
     return p
 
 
+def orchard():
+    """Three fruit trees. Opaque pixels stay two pixels inside the frame."""
+    p = Pix(64, 52)
+    fruit = (196, 72, 58, 255)
+    for index, cx in enumerate((16, 32, 48)):
+        p.rect(cx - 1, 30, 3, 14, WOOD_D)
+        p.rect(cx - 1, 30, 1, 14, WOOD)
+        p.ellipse(cx, 24, 8, 7, LEAF_D)
+        p.ellipse(cx - 2, 22, 6, 5, LEAF)
+        p.ellipse(cx - 3, 20, 3, 2, LEAF_L)
+        for fx, fy in ((cx - 4, 22), (cx + 3, 24), (cx - 1, 27)):
+            p.set(fx, fy, fruit)
+        if index == 1:
+            p.set(cx + 1, 20, LANTERN)
+    p.hline(8, 55, 43, WOOD)
+    p.hline(8, 55, 44, WOOD_D)
+    outline(p)
+    return p
+
+
 def hearth(lit):
     p = Pix(44, 44)
     p.ellipse(22, 28, 16, 8, STONE_D)
@@ -1143,6 +1166,23 @@ def build_terrain(world: World):
             terrain.append(tile)
             foam.append(sum(watery) if tile == "water" else 0)
 
+    # A few grass tiles beside the first sand row become beach, so the shore
+    # is not one tile wide everywhere. Paths were chosen before this pass.
+    widened = []
+    for y in range(height):
+        for x in range(width):
+            index = y * width + x
+            if terrain[index] not in ("grass", "grass_b", "grass_flower") or (x * 3 + y) % 4:
+                continue
+            for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height and terrain[ny * width + nx] in ("sand", "sand_b"):
+                    widened.append(index)
+                    break
+    for index in widened:
+        x, y = index % width, index // width
+        terrain[index] = "sand_b" if (x + y) % 2 else "sand"
+
     places = {(place["x"], place["y"]) for place in world.config["places"]}
     clear = set()
     for x, y in places:
@@ -1252,6 +1292,8 @@ def main():
     add_building("shore", (32, 14), [], {"sound": boats(False), "leaking": boats(True)}, "sound")
     add_building("nets", (22, 44), [], {"sound": net_rack(False), "torn": net_rack(True)}, "sound")
     add_building("garden", (30, 40), [], {"ready": garden()}, "ready")
+    add_building("west_garden", (30, 40), [], {"ready": garden()}, "ready")
+    add_building("orchard", (32, 48), [], {"ready": orchard()}, "ready")
     add_building("fire", (22, 40), [], {"lit": hearth(True), "resting": hearth(False)}, "lit")
     add_building("bench", (24, 28), [], {"ready": flower_bench()}, "ready")
     add_building("food_center", (28, 48), [], {"ready": food_stall()}, "ready")

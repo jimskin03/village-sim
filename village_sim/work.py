@@ -2,16 +2,17 @@
 
 TASKS = {
     "fish": {"places": ("jetty", "shore"), "role": "fisher"},
-    "garden": {"places": ("garden",), "role": "gardener"},
+    "garden": {"places": ("garden", "west_garden", "orchard"), "role": "gardener"},
     "mend_net": {"places": ("nets",), "role": "fisher"},
     "repair_boat": {"places": ("shore",), "role": "boatwright"},
 }
 
 
 def options(sim, place, role, *, hungry=False, collapsed=False):
+    gardens = TASKS["garden"]["places"]
     if collapsed:
         return []
-    if place == "garden" and hungry:
+    if place in gardens and hungry:
         return ["first_basil", "mint_bundle", "wilted_seedlings"]
     if sim.weather == "storm" or sim.step < sim.festival_until or not (6 <= sim.minute // 60 < 18):
         return []
@@ -21,7 +22,7 @@ def options(sim, place, role, *, hungry=False, collapsed=False):
         if sim.pantry["net_condition"] == "torn":
             return ["torn_mesh"]
         return ["silver_fish", "mackerel", "empty_net", "torn_mesh"]
-    if place == "garden":
+    if place in gardens:
         return ["first_basil", "mint_bundle", "wilted_seedlings"]
     if role == "boatwright" and place == "shore":
         return ["sealed_hull", "sound_boat", "leaking_boat"]

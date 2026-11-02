@@ -16,9 +16,9 @@ from .cognition.memory import make_memory, validate_memory
 from .cognition import planning, conversations
 from .simulation import Agent, PERSONAS, Simulation
 from .world import World
-from . import visitors, survival
+from . import visitors, survival, work, events
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 _RUNTIME = {"world", "rng", "decision", "agents", "residents", "pending", "_memory_stores"}
 
 
@@ -81,6 +81,8 @@ def _migrate(data):
         raise ValueError("Unsupported session version")
     if data["schema_version"] == SCHEMA_VERSION:
         return data
+    if data["schema_version"] == 8:
+        return _migrate_events(copy.deepcopy(data))
     if data["schema_version"] == 7:
         return _migrate_survival(copy.deepcopy(data))
     if data["schema_version"] == 6:
@@ -162,22 +164,63 @@ def _migrate_visitors(data):
     return _migrate_survival(data)
 
 
+def _without_survival_places(world):
+    added = {survival.FOOD_CENTER, survival.WATER_CENTER, *survival.SOURCES}
+    trimmed = copy.deepcopy(world)
+    trimmed["places"] = [place for place in trimmed["places"] if place["id"] not in added]
+    return trimmed
+
+
+def _legacy_world():
+    return json.loads((Path(__file__).parent / "data" / "world_schema8.json").read_text())
+
+
+def _relocate(data):
+    """Move anyone left on a tile the new coast no longer walks."""
+    world = World()
+    for resident in data["residents"].values():
+        if (resident.get("x"), resident.get("y")) not in world.walkable:
+            resident["x"], resident["y"] = world.point(resident["home"])
+    visiting = data.get("state", {}).get("visiting", {})
+    guests = visiting.get("visitors") if isinstance(visiting, dict) else None
+    if isinstance(guests, dict):
+        x, y = world.point("guest_home")
+        for visitor in guests.values():
+            if isinstance(visitor, dict) and (visitor.get("x"), visitor.get("y")) not in world.walkable:
+                visitor["x"], visitor["y"] = x, y
+                visitor["destination"] = "guest_home"
+
+
+def _migrate_events(data):
+    """Schema 9 adds happiness, event clocks, and the expanded coast."""
+    state = data["state"]
+    state.setdefault("calm_until", 0)
+    state.setdefault("pirate_until", 0)
+    for resident in data["residents"].values():
+        resident.setdefault("happiness", 60)
+        resident.setdefault("happiness_bonus", 0)
+        resident.setdefault("happiness_bonus_until", 0)
+    current = World().config
+    legacy = _legacy_world()
+    if data.get("world") in (legacy, _without_survival_places(legacy), _without_survival_places(current)):
+        data["world"] = copy.deepcopy(current)
+    _relocate(data)
+    data["schema_version"] = SCHEMA_VERSION
+    return data
+
+
 def _migrate_survival(data):
     """Add survival and collection places, preserving the legacy map otherwise."""
-    world = World()
-    old_world = copy.deepcopy(world.config)
-    added = {survival.FOOD_CENTER, survival.WATER_CENTER, *survival.SOURCES}
-    old_world["places"] = [p for p in old_world["places"] if p["id"] not in added]
-    if data.get("world") == old_world:
-        data["world"] = copy.deepcopy(world.config)
+    current = World().config
+    if data.get("world") == _without_survival_places(current):
+        data["world"] = copy.deepcopy(current)
     state = data["state"]
     state["pantry"].setdefault("water", 3 * len(data["active_agents"]))
     state.setdefault("water_sources", survival.initial_sources())
     for resident in data["residents"].values():
         for name, value in (("food", 100), ("water", 100), ("health", 100), ("collapsed_until", 0)):
             resident.setdefault(name, value)
-    data["schema_version"] = SCHEMA_VERSION
-    return data
+    return _migrate_events(data)
 
 
 def _validate_plan(record, state, world, personas):
@@ -207,7 +250,8 @@ def _validate_plan(record, state, world, personas):
                 raise ValueError("Invalid visit target")
         elif step.get("target") is not None:
             raise ValueError("Invalid action target")
-        if step["action"] == "work" and step["location"] not in ("jetty", "garden", "nets", "shore"):
+        work_places = {place for spec in work.TASKS.values() for place in spec["places"]}
+        if step["action"] == "work" and step["location"] not in work_places:
             raise ValueError("Work does not match the resident's craft")
         if step["action"] in ("drink", "eat", "collect_water"):
             survival.validate_activity(step["location"], step["action"].replace("_", " "))
@@ -239,7 +283,7 @@ def _restore(data):
         raise ValueError("Incomplete world state")
     if data.get("world") != candidate.world.config:
         raise ValueError("Unsupported world geometry")
-    for key in ("step", "weather_until", "festival_until"):
+    for key in ("step", "weather_until", "festival_until", "calm_until", "pirate_until"):
         if not _integer(state[key]):
             raise ValueError("Invalid clock")
     if state["weather"] not in ("clear", "storm") or not _events(state["events"]):
@@ -390,8 +434,18 @@ def _restore(data):
             if type(record[key]) not in (int, float) or not 0 <= record[key] <= 100:
                 raise ValueError("Invalid survival stat")
         until = record["collapsed_until"]
-        if not _integer(until) or (until and (until > state["step"] + 1 or record["health"] != 0)):
+        collapse_limit = max(
+            events.EVENT_EFFECTS["pirate"]["duration"],
+            math.ceil(survival.COLLAPSE_MINUTES / candidate.world.config["minutes_per_step"]),
+        )
+        if not _integer(until) or (until and (until > state["step"] + collapse_limit or record["health"] != 0)):
             raise ValueError("Invalid collapse state")
+        if type(record["happiness"]) not in (int, float) or not 0 <= record["happiness"] <= 100:
+            raise ValueError("Invalid happiness")
+        if not _integer(record["happiness_bonus"]) or record["happiness_bonus"] > 100:
+            raise ValueError("Invalid happiness")
+        if not _integer(record["happiness_bonus_until"]):
+            raise ValueError("Invalid happiness")
         for key in ("last_chat", "last_work", "work_count"):
             if not _integer(record[key], -100 if key.startswith("last_") else 0):
                 raise ValueError("Invalid work state")
