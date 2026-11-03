@@ -272,6 +272,11 @@ pauses the village, registers a test visitor, checks desktop and phone layouts,
 then leaves and restores playback. Screenshots go to a temporary directory
 or `ARTIFACT_DIR`.
 
+`tests/analytics_browser.mjs` uses the same browser and URL settings to check
+analytics filters, pagination, live updates, retries, replay and responsive
+layouts. It uses browser-local fixtures and does not change the village; no
+operator token is needed.
+
 Tests cover daily goals and friendships, a full unattended day, map connectivity, deterministic execution,
 session memory beyond 100 steps, provider changes, external action validation,
 weather and festival reactions, HTTP controls, streaming and recording. Model tests
