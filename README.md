@@ -47,8 +47,12 @@ on/off button remain labelled. Choose ¼× speed to read at a slower pace.
 
 Open **Analytics** in the dock for a neuron-style map of the whole session.
 Villagers connect to event branches covering work, conversations, plans, world
-events, visitors and everyday life. Select a node to filter the searchable
-timeline, or select an event to highlight its participants. Session totals show
+events, visitors and everyday life around a central village node. The map opens
+by default, including on phones. Hover or focus a node to trace its connections;
+thread thickness and shared-event counts show participation. Select a node to filter the searchable
+timeline, or select an event to highlight its participants. The map updates live
+while the event log keeps your place; choose **Show latest** to refresh the log.
+On phones, switch between **Mind map** and **Event log**. Session totals show
 events, villagers, completed tasks and elapsed village time. The timeline pages
 through the full history, including events older than the journal’s recent view;
 villagers who leave remain part of the session. Zoom or drag the map to explore.

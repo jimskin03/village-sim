@@ -28,6 +28,11 @@ let loading = false;
 let pendingUpdate = false;
 let failedRequest = null;
 let loadedRevision = null;
+let mapSummary = null;
+let mapController = null;
+let mapTimer = null;
+let previewNode = null;
+let mapFailed = false;
 const safeColor = (value) => /^#[0-9a-f]{6}$/i.test(value) ? value : "#8d8a82";
 
 const BRANCHES = [
@@ -134,6 +139,7 @@ async function refresh(more = false) {
   requestController = controller;
   loading = true;
   failedRequest = null;
+  mapFailed = false;
   $("#analytics-timeline").setAttribute("aria-busy", "true");
   $("#analytics-more").disabled = true;
   $("#analytics-refresh").disabled = true;
@@ -189,9 +195,13 @@ function renderUpdateStatus() {
   $("#analytics-refresh span").textContent = failedRequest !== null ? "Retry" : pendingUpdate ? "Show latest" : "Refresh";
   $("#analytics-refresh").classList.toggle("has-updates", pendingUpdate);
   if (failedRequest !== null) return;
+  if (mapFailed) {
+    setStatus("The live map couldn’t update. Use Show latest to retry.", true);
+    return;
+  }
   setStatus(summary?.history_complete === false
     ? "This recording contains only a recent window of events."
-    : pendingUpdate ? "New activity available. Your place in the log is saved."
+    : pendingUpdate ? "New events available. Your place in the log is saved."
       : context.recording ? "Activity at this point in the recorded story."
         : `Updated through day ${snapshot.day} · ${snapshot.time}`);
 }
@@ -201,12 +211,9 @@ function applyReport(data, more) {
   nextBefore = data.next_before;
   events = more ? [...new Map([...events, ...data.events].map((event) => [event.id, event])).values()] : data.events;
   if (!events.some((event) => event.id === selectedEvent)) selectedEvent = null;
-  renderStats(data);
   renderFilters(data);
-  renderBreakdown(data);
-  renderNetwork(data);
+  renderMapReport(data);
   renderEvents();
-  renderSelection(data);
 }
 
 function renderStats(data) {
@@ -249,7 +256,7 @@ function renderBreakdown(data) {
   const counts = resident?.by_kind || data.by_kind;
   const totals = data.branches.map((item) => item.kinds.reduce((sum, type) => sum + (counts[type] || 0), 0));
   const largest = Math.max(1, ...totals);
-  $("#analytics-breakdown-note").textContent = resident ? `${resident.name}’s events · select a category` : "Events by category · select to explore";
+  $("#analytics-breakdown-note").textContent = resident ? `${resident.name}’s events` : "All villagers";
   const focused = document.activeElement?.closest("#analytics-breakdown [data-analytics-branch]")?.dataset.analyticsBranch;
   $("#analytics-breakdown").innerHTML = data.branches.map((item, index) => `<button class="analytics-category" data-analytics-branch="${escapeHtml(item.id)}" aria-pressed="${branch === item.id || Boolean(kind && item.kinds.includes(kind))}" style="--node-color:${safeColor(item.color)}">
     <span class="analytics-category-mark" aria-hidden="true">${escapeHtml(item.mark)}</span>
@@ -258,60 +265,166 @@ function renderBreakdown(data) {
   if (focused) [...$("#analytics-breakdown").children].find((button) => button.dataset.analyticsBranch === focused)?.focus({ preventScroll: true });
 }
 
+function renderMapReport(data) {
+  if (!mapSummary || !(data.revision < mapSummary.revision)) mapSummary = data;
+  renderStats(mapSummary);
+  renderBreakdown(mapSummary);
+  renderNetwork(mapSummary);
+  renderSelection(mapSummary);
+}
+
+function scheduleMapUpdate() {
+  if (mapTimer || mapController || mapFailed || loading || failedRequest !== null || context.recording || mapSummary?.revision >= snapshot.revision) return;
+  mapTimer = setTimeout(async () => {
+    mapTimer = null;
+    if (!visible || loading || context.recording) return;
+    const story = snapshot.session_id;
+    const controller = new AbortController();
+    mapController = controller;
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 15000);
+    try {
+      const response = await fetch("/api/analytics?limit=1", { signal: controller.signal });
+      if (!response.ok) throw new Error("Map update failed");
+      const data = await response.json();
+      if (!visible || controller.signal.aborted || context.recording || snapshot.session_id !== story || data.session_id !== story) return;
+      // Updating the graph must never replace the timeline, its cursor or selection.
+      renderMapReport(data);
+    } catch (error) {
+      if ((!controller.signal.aborted || timedOut) && visible && !context.recording && snapshot.session_id === story) {
+        mapFailed = true;
+        renderUpdateStatus();
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (mapController === controller) mapController = null;
+    }
+  }, 2000);
+}
+
 function renderNetwork(data) {
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
   const residents = data.residents.filter((person) => person.event_count || person.active);
-  const width = 520;
-  const height = Math.max(390, residents.length * 62 + 30);
+  const width = mobile ? 640 : 1000;
+  const height = mobile ? Math.max(660, residents.length * 82 + 100) : 660;
   const cx = width / 2;
   const cy = height / 2;
   $("#analytics-network").setAttribute("viewBox", `0 0 ${width} ${height}`);
-  $("#analytics-network").style.height = "auto";
-  const selected = events.find((event) => event.id === selectedEvent);
-  const focusedPeople = selected ? selected.agents : agent ? [agent] : [];
-  const focusedKinds = selected ? [selected.kind] : kindsForRequest();
-  const dots = [];
-  residents.forEach((person, index) => {
-    const x = 88;
-    const y = 30 + (index + .5) / residents.length * (height - 80);
-    const active = focusedPeople.includes(person.id);
-    dots.push(node(x, y, 19, safeColor(person.color), person.name,
-      `${number(person.event_count)} events · ${person.active ? person.activity : "away"}`,
-      person.name.charAt(0), `data-analytics-agent="${escapeHtml(person.id)}"`, active, (selected || agent) && !active));
-    person.x = x;
-    person.y = y;
-  });
+  const position = (index, total, side) => {
+    const t = total === 1 ? .5 : index / (total - 1);
+    if (mobile) return {
+      x: side === "left" ? 170 - Math.sin(t * Math.PI) * 40 : width - 170 + Math.sin(t * Math.PI) * 65,
+      y: 60 + t * (height - 150),
+    };
+    const angle = (side === "left" ? -126 - t * 108 : -54 + t * 108) * Math.PI / 180;
+    return { x: cx + Math.cos(angle) * 325, y: cy + Math.sin(angle) * 255 };
+  };
+  const people = residents.map((person, i) => ({ ...person, ...position(i, residents.length, "left") }));
+  const branches = data.branches.map((item, i) => ({ ...item, ...position(i, data.branches.length, "right") }));
   const links = [];
-  data.branches.forEach((item, index) => {
-    item.x = width - 88;
-    item.y = 30 + (index + .5) / data.branches.length * (height - 80);
-    const active = focusedKinds.some((type) => item.kinds.includes(type));
-    dots.push(node(item.x, item.y, 19, safeColor(item.color), item.name, `${number(item.count)} events`,
-      item.mark, `data-analytics-branch="${escapeHtml(item.id)}"`, active, focusedKinds.length && !active));
-    for (const person of residents) {
-      const count = item.kinds.reduce((total, itemKind) => total + (person.by_kind[itemKind] || 0), 0);
+  const spokes = [];
+  const nodes = [];
+  const maxCount = Math.max(1, ...people.flatMap((person) => branches.map((item) => item.kinds.reduce((sum, type) => sum + (person.by_kind[type] || 0), 0))));
+  for (const person of people) {
+    nodes.push(node(person, "agent", person.name, `${number(person.event_count)} events${person.active ? "" : " · away"}`, person.name.charAt(0), mobile));
+    spokes.push(`<path class="analytics-spoke" data-map-agent="${escapeHtml(person.id)}" d="M${cx - 65},${cy} Q${cx - 135},${person.y} ${person.x},${person.y}"/>`);
+    for (const item of branches) {
+      const count = item.kinds.reduce((sum, type) => sum + (person.by_kind[type] || 0), 0);
       if (!count) continue;
-      const activeLink = (!selected && !agent || focusedPeople.includes(person.id)) && (!focusedKinds.length || active);
-      links.push(`<path class="analytics-link${activeLink ? " is-active" : ""}" d="M${person.x},${person.y} C${(person.x + item.x) / 2},${person.y} ${(person.x + item.x) / 2},${item.y} ${item.x},${item.y}" style="--node-color:${safeColor(item.color)}" stroke-width="${Math.min(5, 1.2 + count / 8)}"/>`);
+      // Bow the threads around the hub so the centre and labels remain readable.
+      const bend = cy + (person.y + item.y < cy * 2 ? -130 : 130);
+      const path = `M${person.x},${person.y} C${cx - 110},${bend} ${cx + 110},${bend} ${item.x},${item.y}`;
+      const attrs = `data-map-agent="${escapeHtml(person.id)}" data-map-branch="${escapeHtml(item.id)}"`;
+      const title = escapeHtml(`${person.name} ↔ ${item.name}: ${number(count)} shared events`);
+      links.push(`<path class="analytics-link" ${attrs} d="${path}" style="--node-color:${safeColor(item.color)}" stroke-width="${1 + 4 * Math.sqrt(count / maxCount)}"><title>${title}</title></path>
+        <path class="analytics-signal" ${attrs} d="${path}" pathLength="100" style="--node-color:${safeColor(item.color)}"/>`);
     }
-  });
+  }
+  for (const item of branches) {
+    nodes.push(node(item, "branch", item.name, `${number(item.count)} events`, item.mark, mobile));
+    spokes.push(`<path class="analytics-spoke" data-map-branch="${escapeHtml(item.id)}" d="M${cx + 65},${cy} Q${cx + 135},${item.y} ${item.x},${item.y}"/>`);
+  }
   const focused = $("#analytics-network").contains(document.activeElement) ? document.activeElement : null;
-  const focusSelector = focused?.dataset.analyticsAgent ? `[data-analytics-agent="${focused.dataset.analyticsAgent}"]`
-    : focused?.dataset.analyticsBranch ? `[data-analytics-branch="${focused.dataset.analyticsBranch}"]`
-      : focused?.hasAttribute("data-analytics-reset") ? "[data-analytics-reset]" : null;
-  $("#analytics-network-content").innerHTML = `<circle cx="${cx}" cy="${cy}" r="180" fill="url(#analytics-glow)"/>
-    ${links.join("")}
-    <g class="analytics-hub" role="button" tabindex="0" aria-label="Show all session events" data-analytics-reset transform="translate(${cx} ${cy})">
-      <circle r="34" /><text dy="4">All</text>
-    </g>
-    ${dots.join("")}`;
-  if (focusSelector) $("#analytics-network-content").querySelector(focusSelector)?.focus({ preventScroll: true });
+  const focusAgent = focused?.dataset.analyticsAgent;
+  const focusBranch = focused?.dataset.analyticsBranch;
+  const focusHub = focused?.hasAttribute("data-analytics-reset");
+  $("#analytics-network-content").innerHTML = `
+    <circle class="analytics-ambient" cx="${cx}" cy="${cy}" r="250" fill="url(#analytics-glow)"/>
+    <ellipse class="analytics-orbit" cx="${cx}" cy="${cy}" rx="${mobile ? 225 : 325}" ry="${mobile ? height / 2 - 65 : 255}"/>
+    ${spokes.join("")}${links.join("")}
+    <g class="analytics-hub" role="button" tabindex="0" aria-label="Lantern Bay simulation. Show all session events" data-analytics-reset transform="translate(${cx} ${cy})">
+      <circle class="analytics-hub-aura" r="90"/>
+      <circle class="analytics-hub-ring" r="76"/>
+      <circle class="analytics-hub-core" r="64"/>
+      <text class="analytics-hub-name" y="-10">Lantern</text><text class="analytics-hub-name" y="16">Bay</text>
+      <text class="analytics-hub-count" y="39">${number(data.event_count)} moments</text>
+    </g>${nodes.join("")}`;
+  if (focused) [...$("#analytics-network-content").querySelectorAll("[role=button]")].find((item) =>
+    focusAgent ? item.dataset.analyticsAgent === focusAgent : focusBranch ? item.dataset.analyticsBranch === focusBranch : focusHub && item.hasAttribute("data-analytics-reset"))?.focus({ preventScroll: true });
+  highlightNetwork();
   transform();
 }
 
-function node(x, y, radius, hue, title, subtitle, mark, attrs, active, dim) {
-  return `<g class="analytics-node${active ? " is-selected" : ""}${dim ? " is-dim" : ""}" transform="translate(${x} ${y})" style="--node-color:${hue}" role="button" tabindex="0" aria-pressed="${active}" aria-label="${escapeHtml(`${title}: ${subtitle}`)}" ${attrs}>
-    <circle r="${radius}"></circle><text class="analytics-node-mark" dy="4">${escapeHtml(mark)}</text>
-    <text class="analytics-node-title" y="${radius + 14}">${escapeHtml(title)}</text></g>`;
+function node(item, type, title, subtitle, mark, mobile) {
+  const below = mobile && type === "branch";
+  const anchor = below ? "middle" : type === "agent" ? "end" : "start";
+  const x = below ? 0 : type === "agent" ? -37 : 37;
+  const y = below ? 46 : -3;
+  return `<g class="analytics-node analytics-node-${type}" transform="translate(${item.x} ${item.y})" style="--node-color:${safeColor(item.color)}" role="button" tabindex="0" aria-pressed="false" aria-label="${escapeHtml(`${title}: ${subtitle}`)}" data-analytics-${type}="${escapeHtml(item.id)}">
+    <title>${escapeHtml(`${title}: ${subtitle}. Select to filter the event log.`)}</title>
+    <circle class="analytics-node-target" r="34"/><circle class="analytics-node-halo" r="29"/>
+    <circle class="analytics-node-core" r="21"/><text class="analytics-node-mark" dy="5">${escapeHtml(mark)}</text>
+    <text class="analytics-node-title" x="${x}" y="${y}" text-anchor="${anchor}">${escapeHtml(title)}</text>
+    <text class="analytics-node-count" x="${x}" y="${y + 20}" text-anchor="${anchor}">${escapeHtml(subtitle)}</text></g>`;
+}
+
+function highlightNetwork() {
+  if (!mapSummary) return;
+  const selected = events.find((event) => event.id === selectedEvent);
+  let people = selected ? selected.agents : agent ? [agent] : [];
+  let types = selected ? [selected.kind] : kindsForRequest();
+  if (previewNode) {
+    people = previewNode.agent ? [previewNode.agent] : [];
+    types = previewNode.branch ? mapSummary.branches.find((item) => item.id === previewNode.branch)?.kinds || [] : [];
+  }
+  const branchIds = mapSummary.branches.filter((item) => item.kinds.some((type) => types.includes(type))).map((item) => item.id);
+  const person = people.length === 1 ? mapSummary.residents.find((item) => people.includes(item.id)) : null;
+  const category = branchIds.length === 1 ? mapSummary.branches.find((item) => branchIds.includes(item.id)) : null;
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
+  const focused = Boolean(selected || people.length || types.length);
+  const connectedPeople = new Set();
+  const connectedBranches = new Set();
+  for (const path of $("#analytics-network").querySelectorAll(".analytics-link, .analytics-signal")) {
+    const active = (!people.length || people.includes(path.dataset.mapAgent)) && (!types.length || branchIds.includes(path.dataset.mapBranch));
+    path.classList.toggle("is-active", active);
+    path.classList.toggle("is-muted", focused && !active);
+    if (active && focused) { connectedPeople.add(path.dataset.mapAgent); connectedBranches.add(path.dataset.mapBranch); }
+  }
+  for (const item of $("#analytics-network").querySelectorAll(".analytics-node")) {
+    const id = item.dataset.analyticsAgent || item.dataset.analyticsBranch;
+    const isPerson = item.hasAttribute("data-analytics-agent");
+    const active = isPerson ? people.includes(id) : branchIds.includes(id);
+    const connected = isPerson ? connectedPeople.has(id) : connectedBranches.has(id);
+    item.classList.toggle("is-selected", active);
+    item.classList.toggle("is-connected", focused && connected);
+    item.classList.toggle("is-dim", focused && !active && !connected);
+    const source = isPerson ? mapSummary.residents.find((entry) => entry.id === id) : mapSummary.branches.find((entry) => entry.id === id);
+    const shared = isPerson && category
+      ? category.kinds.reduce((sum, type) => sum + (source?.by_kind[type] || 0), 0)
+      : !isPerson && person ? (source?.kinds || []).reduce((sum, type) => sum + (person.by_kind[type] || 0), 0) : null;
+    const total = number(isPerson ? source?.event_count : source?.count);
+    const caption = isPerson && !source?.active ? `${total}${mobile ? "" : " events"} · away` : `${total} events`;
+    item.querySelector(".analytics-node-count").textContent = shared == null ? caption : `${number(shared)} shared`;
+    // The pressed state describes the persistent filter, independently of hover.
+    item.setAttribute("aria-pressed", String(isPerson ? agent === id : branch === id || Boolean(kind && mapSummary.branches.find((entry) => entry.id === id)?.kinds.includes(kind))));
+  }
+  for (const path of $("#analytics-network").querySelectorAll(".analytics-spoke")) {
+    path.classList.toggle("is-active", Boolean(path.dataset.mapAgent ? people.includes(path.dataset.mapAgent) : branchIds.includes(path.dataset.mapBranch)));
+  }
+  const count = person && category ? category.kinds.reduce((sum, type) => sum + (person.by_kind[type] || 0), 0) : person?.event_count ?? category?.count;
+  $("#analytics-network-note").textContent = person || category
+    ? `${[person?.name, category?.name].filter(Boolean).join(" ↔ ")} · ${number(count)} ${person && category ? "shared " : ""}events`
+    : "Thicker threads mean more shared events. Hover to trace a connection.";
 }
 
 function renderEvents() {
@@ -333,11 +446,17 @@ function renderEvents() {
 function renderSelection(data) {
   const event = events.find((item) => item.id === selectedEvent);
   const resident = data.residents.find((person) => person.id === agent);
+  const category = data.branches.find((item) => item.id === branch || kind && item.kinds.includes(kind));
+  const contributors = category ? data.residents.map((person) => ({ name: person.name,
+    count: category.kinds.reduce((sum, type) => sum + (person.by_kind[type] || 0), 0),
+  })).filter((person) => person.count).sort((a, b) => b.count - a.count).slice(0, 3) : [];
   $("#analytics-selection").innerHTML = event
-    ? `<span class="analytics-selection-kicker">SELECTED MOMENT · DAY ${event.day} / ${escapeHtml(event.time)}</span><p>${escapeHtml(event.text)}</p><small>Open Village connections to see who was involved.</small>`
+    ? `<span class="analytics-selection-kicker">SELECTED MOMENT · DAY ${event.day} / ${escapeHtml(event.time)}</span><p>${escapeHtml(event.text)}</p><small>Highlighted threads show the villagers and simulation branch involved.</small>`
     : resident
       ? `<span class="analytics-selection-kicker">${escapeHtml(resident.name.toUpperCase())} / ${escapeHtml((resident.role || "Villager").toUpperCase())}</span><p>${escapeHtml(resident.activity)}${resident.mood ? ` · ${escapeHtml(resident.mood)}` : ""}</p><small>${number(resident.work_count)} tasks completed · ${number(resident.event_count)} events${resident.health == null ? "" : ` · Health ${Math.round(resident.health)}%`}${resident.happiness == null ? "" : ` · Happiness ${Math.round(resident.happiness)}%`}</small>`
-      : '<span class="analytics-selection-kicker">FOLLOW THE STORY</span><p>A little work. A conversation. A change in the weather.</p><small>Select a category to filter the log, or open the map to explore each villager’s connections.</small>';
+      : category
+        ? `<span class="analytics-selection-kicker">${escapeHtml(category.name.toUpperCase())} / SIMULATION BRANCH</span><p>${number(category.count)} events${contributors.length ? ` · ${escapeHtml(contributors.map((person) => `${person.name} (${number(person.count)})`).join(" · "))}` : ""}</p><small>Select a villager to explore their participation in this branch.</small>`
+      : '<span class="analytics-selection-kicker">FOLLOW THE STORY</span><p>A little work. A conversation. A change in the weather.</p><small>Select a glowing node to explore its connections. The centre returns to the whole village.</small>';
 }
 
 function filterChanged() {
@@ -349,7 +468,7 @@ function filterChanged() {
   $("#analytics-events").innerHTML = '<p class="analytics-empty">Finding moments…</p>';
   $("#analytics-more").hidden = true;
   $("#analytics-shown").textContent = "";
-  if (summary) { renderFilters(summary); renderBreakdown(summary); }
+  if (summary) { renderFilters(summary); renderBreakdown(mapSummary || summary); highlightNetwork(); }
   $("#analytics-event-count").textContent = "…";
   refresh(false);
 }
@@ -374,7 +493,7 @@ function activate(event) {
     kind = "";
   }
   filterChanged();
-  if (window.matchMedia("(max-width: 760px)").matches) setView("events", true);
+
 }
 
 function setView(view, moveFocus = false) {
@@ -409,13 +528,25 @@ $("#analytics-events").addEventListener("click", (event) => {
   if (!target) return;
   selectedEvent = selectedEvent === Number(target.dataset.analyticsEvent) ? null : Number(target.dataset.analyticsEvent);
   renderEvents();
-  renderNetwork(summary);
-  renderSelection(summary);
+  renderNetwork(mapSummary || summary);
+  renderSelection(mapSummary || summary);
 });
 $("#analytics-network").addEventListener("click", activate);
 $("#analytics-network").addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   activate(event);
+});
+function preview(target) {
+  const item = target?.closest?.(".analytics-node");
+  previewNode = item ? { agent: item.dataset.analyticsAgent, branch: item.dataset.analyticsBranch } : null;
+  highlightNetwork();
+}
+$("#analytics-network").addEventListener("pointerover", (event) => preview(event.target));
+$("#analytics-network").addEventListener("pointerleave", () => { previewNode = null; highlightNetwork(); });
+$("#analytics-network").addEventListener("focusin", (event) => preview(event.target));
+$("#analytics-network").addEventListener("focusout", (event) => preview(event.relatedTarget));
+window.matchMedia("(max-width: 760px)").addEventListener("change", () => {
+  if (visible && mapSummary) { zoom = 1; pan = { x: 0, y: 0 }; renderNetwork(mapSummary); }
 });
 $("#analytics-zoom-in").addEventListener("click", () => { zoom = Math.min(2, zoom + 0.2); transform(); });
 $("#analytics-zoom-out").addEventListener("click", () => { zoom = Math.max(0.7, zoom - 0.2); transform(); });
@@ -447,9 +578,12 @@ svg.addEventListener("pointerdown", (event) => {
 window.VillageAnalytics = {
   setVisible(open) {
     visible = open;
-    if (open) refresh(false);
+    if (open) { setView("activity"); refresh(false); }
     else {
       clearTimeout(searchTimer);
+      clearTimeout(mapTimer);
+      mapTimer = null;
+      mapController?.abort();
       requestController?.abort();
       requestVersion++;
       loading = false;
@@ -462,6 +596,12 @@ window.VillageAnalytics = {
     snapshot = next;
     context = options;
     if (changedStory || changedFrame) {
+      clearTimeout(mapTimer);
+      mapTimer = null;
+      mapController?.abort();
+      mapSummary = null;
+      mapFailed = false;
+      previewNode = null;
       requestController?.abort();
       requestVersion++;
       loading = false;
@@ -493,6 +633,7 @@ window.VillageAnalytics = {
     } else if (!options.recording && next.revision > loadedRevision) {
       pendingUpdate = true;
       renderUpdateStatus();
+      scheduleMapUpdate();
     }
   },
 };

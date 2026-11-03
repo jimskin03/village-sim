@@ -459,7 +459,7 @@
         </button>
       </nav>
     </main>
-    <section id="analytics-panel" class="map-panel" aria-labelledby="analytics-title" hidden>
+    <section id="analytics-panel" class="map-panel" data-view="activity" aria-labelledby="analytics-title" hidden>
       <div class="analytics-heading">
         <div>
           <p class="eyebrow">LANTERN BAY / THE STORY SO FAR</p>
@@ -477,38 +477,40 @@
           <button id="analytics-refresh" class="analytics-refresh"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1"/></svg><span>Refresh</span></button>
         </div>
         <div class="analytics-views" aria-label="Analytics view">
-          <button data-analytics-view="activity" aria-pressed="false" aria-controls="analytics-overview">Activity overview</button>
-          <button data-analytics-view="events" aria-pressed="true" aria-controls="analytics-timeline">Event log</button>
+          <button data-analytics-view="activity" aria-pressed="true" aria-controls="analytics-overview">Mind map</button>
+          <button data-analytics-view="events" aria-pressed="false" aria-controls="analytics-timeline">Event log</button>
         </div>
         <div class="analytics-workspace">
           <div id="analytics-overview" class="analytics-map">
             <div class="analytics-map-heading">
-              <div><h3>Where life happens</h3><p id="analytics-breakdown-note">Events by category · select to explore</p></div>
+              <div><h3>A connected village</h3><p>Select a villager or a branch to follow its story.</p></div>
               <svg class="analytics-map-mark" aria-hidden="true"><use href="#i-analytics" /></svg>
             </div>
-            <div id="analytics-breakdown" class="analytics-breakdown" aria-label="Activity by category"></div>
-            <details class="analytics-connections">
-              <summary>Village connections <span>Explore the map</span></summary>
-              <div id="analytics-graph" class="analytics-graph">
-                <svg id="analytics-network" viewBox="0 0 1000 660" aria-labelledby="analytics-graph-title analytics-graph-desc">
-                  <title id="analytics-graph-title">Village activity mind map</title>
-                  <desc id="analytics-graph-desc">Select a villager or an event branch to explore its activity. Lines connect villagers to the types of events they participated in. Use the zoom buttons or drag to explore.</desc>
-                  <defs>
-                    <radialGradient id="analytics-glow"><stop stop-color="#8cc6af" stop-opacity=".15"/><stop offset="1" stop-color="#8cc6af" stop-opacity="0"/></radialGradient>
-                  </defs>
-                  <g id="analytics-network-content"></g>
-                </svg>
+            <div id="analytics-graph" class="analytics-graph">
+              <div class="analytics-zoom" aria-label="Mind map controls">
+                <button id="analytics-zoom-out" aria-label="Zoom out of mind map">−</button>
+                <button id="analytics-fit" aria-label="Fit mind map">Fit</button>
+                <button id="analytics-zoom-in" aria-label="Zoom into mind map">+</button>
               </div>
-              <div class="analytics-map-footer">
-                <div class="analytics-legend"><span><i class="legend-resident"></i>Villagers</span><span><i class="legend-event"></i>Categories</span></div>
-                <div class="analytics-zoom" aria-label="Mind map controls">
-                  <button id="analytics-zoom-out" aria-label="Zoom out of mind map">−</button>
-                  <button id="analytics-fit" aria-label="Fit mind map">Fit</button>
-                  <button id="analytics-zoom-in" aria-label="Zoom into mind map">+</button>
-                </div>
-              </div>
-            </details>
+              <svg id="analytics-network" viewBox="0 0 900 610" aria-labelledby="analytics-graph-title analytics-graph-desc">
+                <title id="analytics-graph-title">Village mind map</title>
+                <desc id="analytics-graph-desc">Villagers and simulation branches surround the village. Curved lines show event participation; thicker lines mean more shared events. Hover or focus a node to trace its connections. Select nodes to filter the event log. Use the zoom buttons or drag the background to explore.</desc>
+                <defs>
+                  <radialGradient id="analytics-glow"><stop stop-color="#b6d7a4" stop-opacity=".2"/><stop offset="1" stop-color="#b6d7a4" stop-opacity="0"/></radialGradient>
+                  <radialGradient id="analytics-hub-fill"><stop stop-color="#365f52"/><stop offset="1" stop-color="#183f39"/></radialGradient>
+                </defs>
+                <g id="analytics-network-content"></g>
+              </svg>
+              <p id="analytics-network-note" class="analytics-network-note">Thicker threads mean more shared events.</p>
+            </div>
+            <div class="analytics-map-footer">
+              <div class="analytics-legend"><span><i class="legend-resident"></i>Villagers</span><span><i class="legend-event"></i>Simulation branches</span></div>
+            </div>
             <div id="analytics-selection" class="analytics-selection"></div>
+            <details class="analytics-totals">
+              <summary>Activity totals <span id="analytics-breakdown-note">All villagers</span></summary>
+              <div id="analytics-breakdown" class="analytics-breakdown" aria-label="Activity by category"></div>
+            </details>
           </div>
           <aside id="analytics-timeline" class="analytics-timeline" aria-label="Session event explorer">
             <div class="analytics-timeline-heading"><div><h3>Event log <span id="analytics-event-count"></span></h3><p>Every moment, newest first</p></div></div>

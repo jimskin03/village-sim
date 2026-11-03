@@ -25,6 +25,8 @@ try {
   await page.getByRole("button", { name: "Analytics", exact: true }).click();
   await ready();
   assert.equal(await page.locator(".analytics-stat").count(), 4, "Real server report loads");
+  assert.equal(await page.locator("#analytics-network").isVisible(), true, "The mind map is visible as soon as Analytics opens");
+  assert.equal(await page.locator("#analytics-network").evaluate(node => Boolean(node.closest("details"))), false, "The primary map is never collapsed");
   const source = await (await fetch(base + "/api/state")).json();
   const actual = await (await fetch(base + "/api/analytics")).json();
   let revision = source.revision;
@@ -54,6 +56,11 @@ try {
   await page.locator("#analytics-refresh").click();
   await ready();
   assert.equal((await ids()).length, 40);
+  await page.locator('#analytics-network [data-analytics-agent="mara"]').hover();
+  assert.ok(await page.locator('.analytics-link.is-active[data-map-agent="mara"]').count());
+  assert.equal(await page.locator('.analytics-link.is-active:not([data-map-agent="mara"])').count(), 0);
+  assert.ok((await page.locator("#analytics-network-note").textContent()).includes("Mara"));
+  assert.equal(await page.locator('#analytics-network [data-analytics-branch="work"] .analytics-node-count').textContent(), "20 shared");
   await page.locator(".analytics-event").first().click();
   assert.equal(await page.locator(".analytics-event").first().getAttribute("aria-expanded"), "true");
   assert.ok((await page.locator(".analytics-event-text").first().textContent()).length > 220);
@@ -65,11 +72,16 @@ try {
   await page.locator("#analytics-events").evaluate(node => { node.scrollTop = 400; });
   const before = await ids();
   revision += 100;
+  history.unshift({ ...history[0], id: 1900, text: "The map is live while the log stays put." });
   await page.evaluate(({ source, revision }) => window.VillageAnalytics.update({ ...source, revision }, { recording: null, connected: true }), { source, revision });
   assert.deepEqual(await ids(), before, "Live updates retain older pages");
   assert.equal(await page.locator("#analytics-events").evaluate(node => node.scrollTop), 400);
   assert.equal(await page.locator(".analytics-event.is-selected").count(), 1);
   assert.equal(await page.locator("#analytics-refresh span").textContent(), "Show latest");
+  await page.waitForFunction(() => document.querySelector(".analytics-hub-count").textContent === "96 moments");
+  assert.deepEqual(await ids(), before, "Live map updates never replace the event log");
+  assert.equal(await page.locator("#analytics-events").evaluate(node => node.scrollTop), 400);
+  assert.equal(await page.locator('.analytics-event.is-selected').count(), 1);
   fail = true;
   await page.locator("#analytics-more").click();
   await ready();
@@ -86,8 +98,10 @@ try {
   await ready();
   assert.equal((await ids())[0], "2000");
   assert.equal((await ids()).length, 40);
-  await page.locator('#analytics-breakdown [data-analytics-branch="work"]').click();
+  await page.locator('#analytics-network [data-analytics-branch="work"]').focus();
+  await page.keyboard.press("Enter");
   await ready();
+  assert.equal(await page.locator('#analytics-network [data-analytics-branch="work"]').getAttribute("aria-pressed"), "true", "Neurons can be selected using the keyboard");
   await page.locator("#analytics-agent").selectOption("mara");
   await ready();
   await page.locator("#analytics-kind").selectOption("work");
@@ -112,14 +126,39 @@ try {
   assert.ok((await page.locator(".analytics-event-text").allTextContents()).every(text => text.toLowerCase().includes("conversation")));
   await page.locator("#analytics-clear").click();
   await ready();
-  await page.locator(".analytics-connections summary").click();
   await page.locator("#analytics-zoom-in").click();
   await page.locator("#analytics-fit").click();
   assert.ok((await page.locator("#analytics-network-content").getAttribute("transform")).includes("scale(1)"));
-  await page.locator(".analytics-connections summary").click();
+  const graph = await page.locator("#analytics-network").boundingBox();
+  const scale = await page.locator("#analytics-network").evaluate(svg => svg.getScreenCTM().a);
+  await page.mouse.move(graph.x + graph.width / 2, graph.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(graph.x + graph.width / 2 + 25, graph.y + 40);
+  await page.mouse.up();
+  const translation = await page.locator("#analytics-network-content").evaluate(group => group.transform.baseVal.consolidate().matrix.e);
+  assert.ok(Math.abs(translation - 25 / scale) < 1, "Dragging follows the pointer at the rendered map scale");
+  await page.locator("#analytics-fit").click();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  assert.equal(await page.locator(".analytics-signal.is-active").first().evaluate(path => getComputedStyle(path).animationName), "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.locator("#analytics-overview").evaluate(node => { node.scrollTop = 0; });
   for (const [width, height] of [[1366, 900], [1280, 720], [390, 844], [320, 568], [731, 457]]) {
     await page.setViewportSize({ width, height });
+    if (width <= 760) await page.locator('[data-analytics-view="activity"]').click();
+    await page.locator("#analytics-overview").evaluate(node => { node.scrollTop = 0; });
+    assert.equal(await page.locator("#analytics-network").isVisible(), true);
+    const labelsFit = await page.locator("#analytics-network").evaluate(svg => {
+      const view = svg.viewBox.baseVal;
+      return [...svg.querySelectorAll(".analytics-node")].every(node => {
+        const transform = node.transform.baseVal.getItem(0).matrix;
+        const box = node.getBBox();
+        return transform.e + box.x >= -1 && transform.e + box.x + box.width <= view.width + 1
+          && transform.f + box.y >= -1 && transform.f + box.y + box.height <= view.height + 1;
+      });
+    });
+    assert.ok(labelsFit, `Mind map labels fit ${width} × ${height}`);
+    await page.screenshot({ path: join(artifacts, `mindmap-${width}-${height}.png`) });
+    if (width <= 760) await page.locator('[data-analytics-view="events"]').click();
     await page.locator(".analytics-timeline-footer").scrollIntoViewIfNeeded();
     const fits = await page.locator("#analytics-panel").evaluate(panel => {
       const rect = panel.getBoundingClientRect();
@@ -135,9 +174,10 @@ try {
     await page.screenshot({ path: join(artifacts, `analytics-${width}-${height}.png`) });
     if (width === 390) {
       await page.locator('[data-analytics-view="activity"]').click();
-      await page.locator('#analytics-breakdown [data-analytics-branch="work"]').click();
+      await page.locator('#analytics-network [data-analytics-branch="work"]').click();
       await ready();
-      assert.equal(await page.locator("#analytics-panel").getAttribute("data-view"), "events");
+      assert.equal(await page.locator("#analytics-panel").getAttribute("data-view"), "activity", "Selecting a neuron keeps the mind map visible");
+      await page.locator('[data-analytics-view="events"]').click();
       await page.locator("#analytics-clear").click();
       await ready();
     }
@@ -148,6 +188,8 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement.dataset.panel), "analytics-panel");
   await page.getByRole("button", { name: "Analytics", exact: true }).click();
   await ready();
+  assert.equal(await page.locator("#analytics-panel").getAttribute("data-view"), "activity");
+  await page.locator('[data-analytics-view="events"]').click();
   await page.locator("#analytics-search").fill("fish");
   await page.waitForRequest(request => request.url().includes("search=fish"));
   await page.keyboard.press("Escape");
@@ -176,14 +218,27 @@ try {
   delete replay.event_count;
   await page.evaluate(replay => window.VillageAnalytics.update(replay, { recording: {}, replayIndex: 0, connected: true }), replay);
   await ready();
+  await page.locator('[data-analytics-view="events"]').click();
   await page.locator("#analytics-agent").selectOption("mara");
   await ready();
   assert.equal(await page.locator(".analytics-stat strong").first().textContent(), "12", "Replay total is independent of filters");
   await page.evaluate(replay => window.VillageAnalytics.update({ ...replay, event_count: 100 }, { recording: {}, replayIndex: 1 }), replay);
   await ready();
   assert.ok((await page.locator("#analytics-status").textContent()).includes("recent window"));
+  // A small or empty village still has a readable hub and keeps new event kinds.
+  await page.evaluate(source => window.VillageAnalytics.update({ ...source, agents: source.agents.slice(0, 1),
+    events: [{ id: 1, kind: "future_kind", day: 1, time: "18:00", text: "A new thread.", agents: [source.agents[0].id] }], event_count: 1,
+  }, { recording: {}, replayIndex: 2 }), source);
+  await ready();
+  assert.equal(await page.locator(".analytics-node-agent").count(), 1);
+  assert.equal(await page.locator('[data-analytics-branch="other"]').first().count(), 1);
+  assert.equal(await page.locator(".analytics-link").count(), 1);
+  await page.evaluate(source => window.VillageAnalytics.update({ ...source, agents: [], events: [], event_count: 0 }, { recording: {}, replayIndex: 3 }), source);
+  await ready();
+  assert.equal(await page.locator(".analytics-node-agent").count(), 0);
+  assert.equal(await page.locator(".analytics-hub-count").textContent(), "0 moments");
   assert.deepEqual(errors, []);
-  console.log("Analytics browser checks passed: filtering, paging, updates, races, retries, replay, keyboard and five viewport sizes.");
+  console.log("Analytics browser checks passed: neuron map, live connections, filtering, paging, races, retries, replay, keyboard, panning, reduced motion and five viewport sizes.");
   console.log(`Screenshots: ${artifacts}`);
 } finally {
   await browser.close();
